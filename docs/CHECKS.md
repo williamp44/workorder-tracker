@@ -43,6 +43,100 @@ themselves.
 | 6 | The first RED audit (a throwaway script) counted pre-existing tests as new, and one collection error aborted the run, so every test read as RED. Both overstated the result. | its numbers disagreed with what the commits contained | `tools/check_red.py` matches tests by file and id, and continues past collection errors |
 | 7 | On its first run `check_red` failed 3 tests: two hook cases whose ids embedded a path that the unit/integration split had changed (the same tests, renamed), and a test that a *test fixture* was frozen, which only test code can make RED. | `check_red` itself | stable ids; the test of test code removed |
 | 8 | **In CI, `check_red` reported 18 new tests as passing on the base code, for a module the base did not have.** CI installs the project editable (`pip install -e`), and setuptools' import finder served `app.rules` from the working copy to the base tree. The gate failed, but for the wrong reason: it had measured HEAD's code twice. Locally it passed, because the local venv had no editable install. | CI disagreeing with the local run, then reproducing it in a venv installed the way CI installs | `tools/isolation.py`: suites on copied trees run in a subprocess with the editable finders removed; used by `check_red` and the mutation check. `tests/integration/test_isolation.py` was RED under an editable install (`DID NOT RAISE ModuleNotFoundError`) and is green now. It can only go RED where the project is installed editable, which is how CI installs, so it has no mutant (a local mutation run could not kill one). |
+| 9 | **The type gate never read the hooks.** pyrefly skips hidden directories whatever its excludes say, so `.claude/hooks` in `pyrefly.toml` was dropped with a one-line `WARN` and the gate still passed. Checked as explicit files, the hooks had 2 real warnings (redundant `str()` calls). A first fix then missed a planted error in a temp directory, because with no config in reach pyrefly falls back to a lenient preset. | reading CI's output instead of its exit code | `tools/check_types.py` checks the project and then the hooks as explicit files, with the preset pinned and warnings failing the gate. `test_check_types.py` plants an error in a hook and requires the command to find it; two mutants (hooks dropped, lenient preset) prove that test can fail. |
+
+## CI evidence
+
+The gates as they ran in GitHub Actions, not only locally: the command each
+step ran and what it printed. Taken from the log of
+[CI run 37980856090](https://github.com/williamp44/workorder-tracker/actions/runs/37980856090),
+on PR #2's last commit `360bf79`, merged into `main` as `6d31252`. Only
+per-test `PASSED` lines and environment noise are trimmed.
+
+**Lint (ruff)** (SQLite leg)
+
+```
+$ ruff check .
+All checks passed!
+```
+
+**Types (pyrefly)** (SQLite leg)
+
+```
+$ pyrefly check
+ INFO Checking project configured at `./pyrefly.toml`
+ WARN Skipping include pattern `./.claude/hooks` because it is matched by `project-excludes` or an ignore file.
+`project-excludes`: [**/node_modules, **/__pycache__, **/venv/**/*, /opt/hostedtoolcache/Python/3.12.15/x64/lib/python3.12/site-packages], ignore files [./.g...
+ INFO 0 errors (4 suppressed)
+```
+
+**FP discipline (check_fp)** (SQLite leg)
+
+```
+$ python -m tools.check_fp
+0 finding(s)
+```
+
+**Test (SQLite)** (SQLite leg)
+
+```
+$ pytest -v
+collecting ... collected 174 items
+============================= 174 passed in 2.61s ==============================
+```
+
+**Test (MariaDB)** (MariaDB leg)
+
+```
+$ pytest -v
+collecting ... collected 174 items
+============================= 174 passed in 3.92s ==============================
+```
+
+**RED first (check_red)** (SQLite leg)
+
+```
+$ python -m tools.check_red --base origin/main
+  base 7e45b323  head HEAD
+  72 new test(s), 1 declared control(s)
+OK   all 71 new test(s) were RED on the base code
+```
+
+**Mutation check (SQLite)** (SQLite leg)
+
+```
+$ python -m tools.mutation_check
+  control (no mutation)              pytest exit 0
+  canary-docstring-only                pytest exit 0
+  drop-tenant-filter-get-work-order    pytest exit 1
+  drop-tenant-filter-list-work-orders  pytest exit 1
+  drop-tenant-filter-get-site          pytest exit 1
+  allow-done-to-open                   pytest exit 1
+  transition-table-made-mutable        pytest exit 1
+  rules-core-does-io                   pytest exit 1
+  unit-test-uses-a-mock                pytest exit 1
+  unconditional-status-write           pytest exit 1
+  snapshot-conflict-becomes-500        pytest exit 1
+  drop-csrf-guard                      pytest exit 1
+  accept-blank-names                   pytest exit 1
+  unbounded-ids                        pytest exit 1
+  red-gate-accepts-green-tests         pytest exit 1
+  fp-check-allows-mutable-constants    pytest exit 1
+  gate-hook-forgets-ruff-config        pytest exit 1
+  git-hook-allows-add-all              pytest exit 1
+  migration-default-drifts-from-model  pytest exit 1
+OK   control passed, equivalent canary survived, 17 of 17 mutants killed
+```
+
+**What this output was worth beyond the green.** The pyrefly step printed a
+`WARN Skipping include pattern .../.claude/hooks` and still passed: the type
+gate had never read a single hook. That is instrument defect 9 below, found
+by reading the output rather than the exit code. CI now runs
+`python -m tools.check_types`, which checks the hooks as explicit files.
+
+The run before this one failed in `check_red`, correctly but for the wrong
+reason (instrument defect 8): CI's editable install let the base tree import
+the working copy's code.
 
 ## Measurements
 

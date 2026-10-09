@@ -63,7 +63,7 @@ CI runs on every push and PR: ruff, pyrefly, the functional-discipline check, th
 
 ```bash
 ruff check .                              # lint, zero findings
-pyrefly check                             # types, zero errors
+python -m tools.check_types              # types: the project, and the hooks pyrefly would skip
 python -m tools.check_fp                  # immutable constants, pure core, no mocks in unit tests
 python -m tools.mutation_check            # prove the suite fails when the code is wrong
 python -m tools.check_red --base main     # every new test fails on main's code
