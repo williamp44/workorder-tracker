@@ -35,6 +35,17 @@
             "statusMessage": "linting and type-checking the edit"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/diagnostic_scan.py\"",
+            "timeout": 15,
+            "statusMessage": "scanning the output for diagnostics"
+          }
+        ]
       }
     ]
   }

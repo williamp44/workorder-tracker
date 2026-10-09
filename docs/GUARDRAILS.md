@@ -123,6 +123,24 @@ function call used as a type annotation, a mistyped lookup table, a
 `.rowcount` the declared type does not have, and an `Optional` used unchecked
 (CHECKS.md).
 
+**And the diagnostics nobody reads: `diagnostic_scan.py`.** A tool can say
+exactly what is wrong and still be ignored, because of *where* it says it.
+Warnings print first, at the top; the summary prints last, at the bottom; the
+reader, an AI agent included, scans the bottom for the verdict. That is how a
+pyrefly `WARN` saying the hooks were never type-checked was missed twice. This
+hook scans every Bash result for unsolicited toolchain diagnostics (and the
+command for `2>&1 | tail`, which discards the top outright) and attaches its
+findings directly after the tool result, in the same turn: after the summary
+line, where attention already lands. It reports and never blocks, and it is
+built for precision, because a guard that fires on a passing run teaches the
+reader to ignore it.
+
+Its tests are built from a payload contract **recorded** from a live firing,
+not from the documentation: the documented key (`tool_output`) is not what
+the harness sends, and a guard built from the docs scanned nothing and
+reported clean while its tests passed. Any drift from the recorded shape is
+reported on every firing.
+
 ### 3. Catch before merge: CI (`.github/workflows/ci.yml`)
 
 | Step | Leg | Gate |
@@ -216,5 +234,6 @@ again. That is how every row of the table at the end of this page got there.
 | An agent loosening a gate it is judged by | design (measured in another project) | `guard_gates`; mutant |
 | `git add -A`, or discarding uncommitted work | an agent in another project | `guard_git`; mutant |
 | A stale waiver that suppresses nothing | ruff `RUF100` | ruff gate |
+| A diagnostic printed at the top and not read, because the reader scans the bottom | the user rereading CI's log | `diagnostic_scan.py` (PostToolUse); 35 tests from a recorded payload; 2 mutants |
 | A gate whose scope silently shrinks (pyrefly skipping `.claude/hooks`) | reading CI's output, not its exit code | `tools/check_types.py`; a planted error it must find; 2 mutants |
 | A check that measures the working copy when it means to measure a copy | CI disagreeing with a local run | `tools/isolation.py`; `test_isolation.py` (RED under an editable install, as CI installs) |

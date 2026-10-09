@@ -1,0 +1,30 @@
+{
+  "recorded": "2026-10-09T12:34:32",
+  "note": "Observed shape of the PostToolUse payload. Recorded from a live firing, NOT transcribed from documentation - that is the entire point (ledger 57). Delete this file to re-record.",
+  "top_level_keys": [
+    "cwd",
+    "duration_ms",
+    "effort",
+    "hook_event_name",
+    "permission_mode",
+    "prompt_id",
+    "scratchpad_dir",
+    "session_id",
+    "tool_input",
+    "tool_name",
+    "tool_response",
+    "tool_use_id",
+    "transcript_path"
+  ],
+  "tool_response_keys": [
+    "interrupted",
+    "isImage",
+    "noOutputExpected",
+    "stderr",
+    "stdout"
+  ],
+  "tool_input_keys": [
+    "command",
+    "description"
+  ]
+}
