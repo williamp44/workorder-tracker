@@ -1,121 +1,106 @@
-# Checks: what each one can see, measured
+# Checks ledger
 
-Every check in this repo had to show two numbers before it was allowed to
-gate CI:
+Every defect found in this repo, what found it, and the test that now holds
+it. Every number has the command that produced it, so it can be re-run
+rather than remembered. The method behind it is in
+[GUARDRAILS.md](GUARDRAILS.md).
 
-1. **Does it fire on the defect?** Run against the known bugs (the mutants in
-   `tools/mutation_check.py`).
-2. **Is it quiet on the current tree?** Or, if it is not, what is each finding?
+Measured 2026-10-09.
 
-A check that is quiet on the tree but blind to the defects is decoration. A
-check that fires on the defects but is noisy on the tree gets switched off
-within a week. Each entry records the command and its output, so a number can
-be re-run rather than remembered.
+## Defects in the app
 
----
+Each one was written as a failing test first (`tests/test_review_findings.py`;
+RED output in `docs/evidence/review_findings_RED.txt`), then fixed.
 
-## Mutation check (`tools/mutation_check.py`), 2026-10-09
+| # | Defect | Found by | Fix |
+| --- | --- | --- | --- |
+| 1 | Two concurrent status changes on one order: both pass the transition check and the last write wins, so `done` becomes `cancelled`, which the table forbids. Demonstrated live. | adversarial review; Linus review | The UPDATE only applies `WHERE status = <the status that was checked>`. Zero rows means 409. |
+| 2 | The cookie-authenticated HTML POST accepted a cross-site form: 200 with only the cookie. Demonstrated live. | adversarial review | `/ui` POSTs require `HX-Request`; a cross-site form cannot set it without a CORS preflight. |
+| 3 | Duplicate site name under a race: check-then-insert let the unique constraint raise, giving a 500. | Linus review; adversarial review | The unique constraint is the check; `IntegrityError` becomes 409. |
+| 4 | `GET /api/work-orders/99999999999999999999` raised `OverflowError` (500). | adversarial review | Ids are bounded to the column's range (`1..2**31-1`); 422. |
+| 5 | A site name or title of only spaces was accepted. | adversarial review | Names are trimmed and must be non-blank. |
+| 6 | `alembic check` ignored server defaults, so a migration whose default drifted from the model passed. | adversarial review; then a mutant that survived | `compare_server_default`. |
+| 7 | On MariaDB 11 the race in #1 surfaced as error 1020 ("Record has changed since last read"): a 500, not a 409. | CI, MariaDB leg | 1020 on the status UPDATE becomes 409. Any other database error still propagates (tested). |
+| 8 | The fix for #6 reported a false difference on MariaDB, which reflects `now()` as `current_timestamp()`. A defect introduced by a fix. | CI, MariaDB leg | `app/schema_compare.py` treats every dialect's spelling of "now" as equal; anything else compares as written. |
+| 9 | Error mapping duplicated in 5 routes; 7 × `raise` inside `except` without `from` (B904). | ruff; Linus review | One mapping in `app/main.py`; the try/except blocks are gone. |
+| 10 | 4 type errors in code written during this work: a function call used as an annotation (×2), a lookup table whose key type did not match, `.rowcount` absent from the declared result type. | pyrefly | Typed aliases, an annotated table, an `isinstance` narrowing. |
 
-The suite must fail when the code is wrong. Each mutant is applied to a temp
-copy of the repo, never the working tree; an unmutated copy runs first as a
-control and must pass.
+## Defects in the instruments
+
+An instrument built to check a claim is written by the same process that
+made the claim, so it inherits blind spots. These were found in the checks
+themselves.
+
+| # | Defect | How it surfaced | Fix |
+| --- | --- | --- | --- |
+| 1 | `tools/ruff_vs_mutants.py` reported 3 findings on the tree; ruff reported 8. It stored findings in a set with line numbers dropped, so 7 identical messages collapsed to 2. | its number disagreed with a second source | a `Counter` |
+| 2 | **The mutation check killed every mutant with its own self-test.** In a mutated copy, the test that every mutant still applies fails by construction, so all mutants looked killed whatever the app tests did. The first "4 of 4 killed" proved nothing. | a mutant was killed that the adversarial review had shown survives; asking *which test* killed it | mutant runs exclude the tool's own tests; an **equivalent canary** mutant that must survive now fails the run if anything but behaviour kills it. Shown to go red under the old command. |
+| 3 | Two `# noqa: E402` waivers copied from another codebase suppressed nothing. | ruff `RUF100` | removed |
+| 4 | `check_discipline` (15 AST rules from another codebase): 2 findings here, both false positives (`impure-decision` on the database layer, which is supposed to touch a cursor), and 0 of 4 mutants seen. | the two-number test | not adopted |
+
+## Measurements
+
+### Mutation check
 
 ```
 $ python tools/mutation_check.py
   control (no mutation)              pytest exit 0
+  canary-docstring-only                pytest exit 0
   drop-tenant-filter-get-work-order    pytest exit 1
   drop-tenant-filter-list-work-orders  pytest exit 1
   drop-tenant-filter-get-site          pytest exit 1
   allow-done-to-open                   pytest exit 1
-OK   control passed, 4 of 4 mutants killed
-exit=0
+  unconditional-status-write           pytest exit 1
+  snapshot-conflict-becomes-500        pytest exit 1
+  drop-csrf-guard                      pytest exit 1
+  accept-blank-names                   pytest exit 1
+  unbounded-ids                        pytest exit 1
+  gate-hook-forgets-ruff-config        pytest exit 1
+  git-hook-allows-add-all              pytest exit 1
+  migration-default-drifts-from-model  pytest exit 1
+OK   control passed, equivalent canary survived, 12 of 12 mutants killed
 ```
 
-**Proved it can fail.** A first green proves nothing until the check has been
-seen red. A canary mutant that only edits a docstring (which no test can or
-should catch) was added for one run:
+The verdict reads pytest's exit code, never its output. Exit 1 means tests
+failed; exits 2-5 mean pytest could not run, which counts as inconclusive,
+not killed. Each mutant applies to a temp copy; the working tree is never
+touched.
+
+### ruff: does a generic linter see the tenant bugs?
 
 ```
-  canary-docstring-only                pytest exit 0
-FAIL canary-docstring-only survived: the suite passed with the bug in place
-exit=1
-```
-
-**The check is code, so it has tests** (`tests/test_mutation_check.py`, 11
-tests, written first and seen failing). They pin the three ways a mutation
-tool lies:
-
-- a pattern that no longer matches makes the "mutant" the unchanged code, so
-  it survives and blames the tests: `apply` refuses zero or several matches;
-- a red control makes every mutant look killed: the verdict fails on it;
-- pytest exit 2-5 means the suite never ran: counted as inconclusive, not
-  killed.
-
----
-
-## ruff (`ruff.toml`), 2026-10-09
-
-The rule families were carried over from a larger codebase where each one
-had caught a real defect. Before tuning, on this tree:
-
-```
-$ ruff check --statistics .
-18  B008    function-call-in-default-argument
- 7  B904    raise-without-from-inside-except
- 3  E402    module-import-not-at-top-of-file
- 1  ARG001  unused-function-argument
-Found 29 errors.
-```
-
-| finding | n | verdict | action |
-| --- | --- | --- | --- |
-| B008 on `Depends(...)` / `Form(...)` | 18 | FastAPI's idiom, 0 real | `extend-immutable-calls`; tuned, not waived |
-| E402 in `alembic/env.py` | 3 | the sys.path-then-import shape Alembic needs | per-file ignore |
-| B904 in `app/routers/` | 7 | real: raising `HTTPException` inside `except` without `from` chains an internal exception into the traceback | **open**: fix pending review |
-| ARG001 in `tests/test_tenant_isolation.py` | 1 | fixture requested for its side effect, not its value | **open**: fix pending review |
-
-After tuning: 8 findings, all real, all open.
-
-**Does it fire on the defects?** Measured with `tools/ruff_vs_mutants.py`:
-
-```
-$ python -m tools.ruff_vs_mutants
-  current tree: 8 finding(s)
+$ python -m tools.ruff_vs_mutants          # measured on the first 4 mutants
   drop-tenant-filter-get-work-order    +1  app/services.py:ARG001 Unused function argument: `tenant_id`
   drop-tenant-filter-list-work-orders  +1  app/services.py:ARG001 Unused function argument: `tenant_id`
   drop-tenant-filter-get-site          +1  app/services.py:ARG001 Unused function argument: `tenant_id`
   allow-done-to-open                   +0
-  ruff adds a finding on 3 of 4 mutants
 ```
 
-**A generic linter catches 3 of the 4 tenant-isolation bugs**, and only
-because of a design rule: every function in `app/services.py` takes
-`tenant_id`, so dropping its filter leaves the argument unused. The protection
-is conditional. If `tenant_id` were also read for logging, ARG001 would go
-quiet and only the tests would remain. It sees nothing in the transition
-table, which is data, not code.
+3 of 4, and only because of a design rule: every service function takes
+`tenant_id`, so dropping its filter leaves the argument unused. If
+`tenant_id` were also read for logging, ARG001 would go quiet. Before tuning,
+ruff reported 29 findings: 18 were FastAPI's `Depends(...)` idiom (tuned out
+via `extend-immutable-calls`), 3 were Alembic's required import order
+(per-file ignore), and 8 were real (#9 above and an unused fixture argument).
+Now 0.
 
-**The measurement tool had a defect of its own, found on its first run.** It
-first reported `current tree: 3 finding(s)` against ruff's 8. Findings were
-stored in a set with line numbers dropped, so seven identical B904 messages
-collapsed to two. Now a `Counter`. The number disagreeing with a second source
-is what exposed it.
+### pyrefly
 
----
-
-## Complexity report (`tools/complexity.py`), 2026-10-09
-
-A report, not a gate: it says where to read closely.
+The config file is load-bearing. Without one, pyrefly falls back to a
+lenient preset that reports nothing on a `None` passed to a `str` parameter.
+So the first run planted exactly that as a control:
 
 ```
-$ python -m tools.complexity --stats
-  79 functions in app, scripts, tools, tests, alembic
-  median 8 lines, longest 47, median depth 0
-          0-30 lines:   78
-        31-100 lines:    1
-      over 100 lines:    0
+ERROR Argument `None` is not assignable to parameter `x` with type `str` in function `f` [bad-argument-type]
+ --> tools/zz_control.py:4:3
+```
+
+Then it was removed. Now 0 errors, plus 1 suppression with its reason inline
+(Jinja's stubs type `env.globals` as built-ins only).
+
+### Complexity (a report, not a gate)
+
+```
 $ python -m tools.complexity
   0 function(s) over 100 lines or deeper than 5
 ```
-
-Nothing to report on a repo this size, which is the expected result.
