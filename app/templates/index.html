@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Work Orders – {{ tenant.name }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <main class="max-w-5xl mx-auto p-6">
+    <h1 class="text-2xl font-semibold mb-1">Work orders</h1>
+    <p class="text-sm text-slate-500 mb-6">{{ tenant.name }}</p>
+    {% if orders %}
+    <table class="w-full bg-white rounded shadow-sm text-sm">
+      <thead class="text-left text-slate-500 border-b">
+        <tr>
+          <th class="p-3">#</th><th class="p-3">Title</th><th class="p-3">Site</th>
+          <th class="p-3">Priority</th><th class="p-3">Status</th><th class="p-3">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for wo in orders %}{% include "_row.html" %}{% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-slate-500">No work orders yet.</p>
+    {% endif %}
+  </main>
+</body>
+</html>

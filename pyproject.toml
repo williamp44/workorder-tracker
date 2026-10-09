@@ -1,0 +1,27 @@
+[project]
+name = "workorder-tracker"
+version = "0.1.0"
+description = "Multi-tenant work-order tracker: FastAPI, async SQLAlchemy, Alembic, MariaDB, HTMX"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
+    "aiomysql>=0.2",
+    "aiosqlite>=0.20",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    "uvicorn>=0.29",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

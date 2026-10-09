@@ -1,0 +1,3 @@
+CREATE DATABASE IF NOT EXISTS workorders_test;
+GRANT ALL PRIVILEGES ON workorders_test.* TO 'app'@'%';
+FLUSH PRIVILEGES;

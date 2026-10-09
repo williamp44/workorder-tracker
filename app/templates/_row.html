@@ -1,0 +1,17 @@
+<tr id="wo-{{ wo.id }}" class="border-b last:border-0">
+  <td class="p-3">{{ wo.id }}</td>
+  <td class="p-3">{{ wo.title }}</td>
+  <td class="p-3">{{ sites.get(wo.site_id, "") }}</td>
+  <td class="p-3">{{ wo.priority.value }}</td>
+  <td class="p-3" data-status="{{ wo.status.value }}">{{ wo.status.value.replace("_", " ") }}</td>
+  <td class="p-3 space-x-1">
+    {% for next in ALLOWED[wo.status] | sort(attribute="value") %}
+    <button class="px-2 py-1 rounded border text-xs hover:bg-slate-100"
+            hx-post="/ui/work-orders/{{ wo.id }}/status"
+            hx-vals='{"new_status": "{{ next.value }}"}'
+            hx-target="#wo-{{ wo.id }}" hx-swap="outerHTML">
+      {{ next.value.replace("_", " ") }}
+    </button>
+    {% endfor %}
+  </td>
+</tr>
