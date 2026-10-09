@@ -17,7 +17,7 @@ and reviews found, and how each was fixed.
 
 ## What it shows
 
-The domain is deliberately small. The point is how it handles **multi-tenant data safely**:
+The domain is deliberately small. The point is how it handles **multi-tenant data safely** and the **harness engineering guardrails** included to prevent and find defects in AI-generated code (see [docs/GUARDRAILS.md](docs/GUARDRAILS.md)). The multi-tenant handling:
 
 | Concern | How it's handled |
 | --- | --- |
