@@ -27,6 +27,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from tools.isolation import pytest_command
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -60,8 +62,8 @@ def _run(tree: Path) -> tuple[dict[str, str], frozenset[str]]:
     """({test: GREEN|RED|SKIP}, controls) for the suite in `tree`."""
     report = tree / ".check_red.xml"
     subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
-         "--continue-on-collection-errors", f"--junitxml={report}", "tests"],
+        pytest_command("-q", "-p", "no:cacheprovider",
+                       "--continue-on-collection-errors", f"--junitxml={report}", "tests"),
         cwd=tree, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     if not report.exists():

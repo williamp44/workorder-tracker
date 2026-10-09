@@ -132,7 +132,7 @@ function call used as a type annotation, a mistyped lookup table, a
 | `python -m tools.check_fp` | SQLite | zero findings |
 | `pytest` | SQLite **and** MariaDB | all pass |
 | `python -m tools.check_red` | SQLite, pull requests | every new test RED on the base code |
-| `python tools/mutation_check.py` | SQLite | control passes, canary survives, every mutant killed |
+| `python -m tools.mutation_check` | SQLite | control passes, canary survives, every mutant killed |
 
 ### 4. Catch what checks cannot: review
 
@@ -179,3 +179,4 @@ mechanically.
 | An agent loosening a gate it is judged by | design (measured in another project) | `guard_gates`; mutant |
 | `git add -A`, or discarding uncommitted work | an agent in another project | `guard_git`; mutant |
 | A stale waiver that suppresses nothing | ruff `RUF100` | ruff gate |
+| A check that measures the working copy when it means to measure a copy | CI disagreeing with a local run | `tools/isolation.py`; `test_isolation.py` (RED under an editable install, as CI installs) |

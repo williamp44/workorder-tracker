@@ -42,13 +42,14 @@ themselves.
 | 5 | A mock that patched a method the code no longer calls (`session.scalar`, after the pre-check was removed): the test still passed, so the patch was dead. | reviewing the tests against the no-mocks-in-unit-tests rule | removed; the test exercises the constraint directly |
 | 6 | The first RED audit (a throwaway script) counted pre-existing tests as new, and one collection error aborted the run, so every test read as RED. Both overstated the result. | its numbers disagreed with what the commits contained | `tools/check_red.py` matches tests by file and id, and continues past collection errors |
 | 7 | On its first run `check_red` failed 3 tests: two hook cases whose ids embedded a path that the unit/integration split had changed (the same tests, renamed), and a test that a *test fixture* was frozen, which only test code can make RED. | `check_red` itself | stable ids; the test of test code removed |
+| 8 | **In CI, `check_red` reported 18 new tests as passing on the base code, for a module the base did not have.** CI installs the project editable (`pip install -e`), and setuptools' import finder served `app.rules` from the working copy to the base tree. The gate failed, but for the wrong reason: it had measured HEAD's code twice. Locally it passed, because the local venv had no editable install. | CI disagreeing with the local run, then reproducing it in a venv installed the way CI installs | `tools/isolation.py`: suites on copied trees run in a subprocess with the editable finders removed; used by `check_red` and the mutation check. `tests/integration/test_isolation.py` was RED under an editable install (`DID NOT RAISE ModuleNotFoundError`) and is green now. It can only go RED where the project is installed editable, which is how CI installs, so it has no mutant (a local mutation run could not kill one). |
 
 ## Measurements
 
 ### Mutation check
 
 ```
-$ python tools/mutation_check.py
+$ python -m tools.mutation_check
   control (no mutation)              pytest exit 0
   canary-docstring-only                pytest exit 0
   drop-tenant-filter-get-work-order    pytest exit 1

@@ -1,6 +1,6 @@
 """Prove the test suite fails when the code is wrong.
 
-    python tools/mutation_check.py
+    python -m tools.mutation_check
 
 For each mutant below: copy the repo to a temp dir, inject the bug into the
 copy, run pytest there, and require it to FAIL. An unmutated copy runs first
@@ -16,6 +16,8 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from tools.isolation import pytest_command
 
 ROOT = Path(__file__).resolve().parent.parent
 SKIP = shutil.ignore_patterns(".git", ".venv", "__pycache__", ".pytest_cache", "*.db")
@@ -182,8 +184,8 @@ def run_suite(tree: Path) -> int:
         # The mutation tool's own tests are excluded: in a mutated copy, the
         # test that every mutant still applies fails by construction, which
         # once made every mutant look killed whatever the app tests did.
-        [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider",
-         "--ignore=tests/unit/test_mutation_check.py"],
+        pytest_command("-q", "-x", "-p", "no:cacheprovider",
+                       "--ignore=tests/unit/test_mutation_check.py"),
         cwd=tree,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
