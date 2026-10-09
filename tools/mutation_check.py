@@ -115,6 +115,18 @@ MUTANTS = (
         "MAX_ID = 2**63 - 1",
     ),
     Mutant(
+        "red-gate-accepts-green-tests",
+        "tools/check_red.py",
+        'if outcome == "GREEN":',
+        'if outcome == "NEVER":',
+    ),
+    Mutant(
+        "fp-check-allows-mutable-constants",
+        "tools/check_fp.py",
+        "if isinstance(t, ast.Name) and CONSTANT.match(t.id) and _is_mutable(value):",
+        "if isinstance(t, ast.Name) and CONSTANT.match(t.id) and not _is_mutable(value):",
+    ),
+    Mutant(
         "gate-hook-forgets-ruff-config",
         ".claude/hooks/guard_gates.py",
         '    ("ruff.toml",),\n',

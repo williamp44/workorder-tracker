@@ -9,8 +9,9 @@ Measured 2026-10-09.
 
 ## Defects in the app
 
-Each one was written as a failing test first (`tests/test_review_findings.py`;
-RED output in `docs/evidence/review_findings_RED.txt`), then fixed.
+Each one was written as a failing test first (`tests/integration/test_review_findings.py`;
+RED output in `docs/evidence/review_findings_RED.txt`), then fixed. That is
+now checked from git history, not just claimed: see "RED first" below.
 
 | # | Defect | Found by | Fix |
 | --- | --- | --- | --- |
@@ -24,6 +25,7 @@ RED output in `docs/evidence/review_findings_RED.txt`), then fixed.
 | 8 | The fix for #6 reported a false difference on MariaDB, which reflects `now()` as `current_timestamp()`. A defect introduced by a fix. | CI, MariaDB leg | `app/schema_compare.py` treats every dialect's spelling of "now" as equal; anything else compares as written. |
 | 9 | Error mapping duplicated in 5 routes; 7 × `raise` inside `except` without `from` (B904). | ruff; Linus review | One mapping in `app/main.py`; the try/except blocks are gone. |
 | 10 | 4 type errors in code written during this work: a function call used as an annotation (×2), a lookup table whose key type did not match, `.rowcount` absent from the declared result type. | pyrefly | Typed aliases, an annotated table, an `isinstance` narrowing. |
+| 11 | 7 mutable module constants, including the transition table itself (a dict of sets any importer could change) and the error-to-status map. | `check_fp` (`mutable-constant`), measured on `main` before the rule existed | tuples, frozensets, `MappingProxyType`; the transition decision moved to a pure `app/rules.py` |
 
 ## Defects in the instruments
 
@@ -37,6 +39,9 @@ themselves.
 | 2 | **The mutation check killed every mutant with its own self-test.** In a mutated copy, the test that every mutant still applies fails by construction, so all mutants looked killed whatever the app tests did. The first "4 of 4 killed" proved nothing. | a mutant was killed that the adversarial review had shown survives; asking *which test* killed it | mutant runs exclude the tool's own tests; an **equivalent canary** mutant that must survive now fails the run if anything but behaviour kills it. Shown to go red under the old command. |
 | 3 | Two `# noqa: E402` waivers copied from another codebase suppressed nothing. | ruff `RUF100` | removed |
 | 4 | `check_discipline` (15 AST rules from another codebase): 2 findings here, both false positives (`impure-decision` on the database layer, which is supposed to touch a cursor), and 0 of 4 mutants seen. | the two-number test | not adopted |
+| 5 | A mock that patched a method the code no longer calls (`session.scalar`, after the pre-check was removed): the test still passed, so the patch was dead. | reviewing the tests against the no-mocks-in-unit-tests rule | removed; the test exercises the constraint directly |
+| 6 | The first RED audit (a throwaway script) counted pre-existing tests as new, and one collection error aborted the run, so every test read as RED. Both overstated the result. | its numbers disagreed with what the commits contained | `tools/check_red.py` matches tests by file and id, and continues past collection errors |
+| 7 | On its first run `check_red` failed 3 tests: two hook cases whose ids embedded a path that the unit/integration split had changed (the same tests, renamed), and a test that a *test fixture* was frozen, which only test code can make RED. | `check_red` itself | stable ids; the test of test code removed |
 
 ## Measurements
 
@@ -50,15 +55,20 @@ $ python tools/mutation_check.py
   drop-tenant-filter-list-work-orders  pytest exit 1
   drop-tenant-filter-get-site          pytest exit 1
   allow-done-to-open                   pytest exit 1
+  transition-table-made-mutable        pytest exit 1
+  rules-core-does-io                   pytest exit 1
+  unit-test-uses-a-mock                pytest exit 1
   unconditional-status-write           pytest exit 1
   snapshot-conflict-becomes-500        pytest exit 1
   drop-csrf-guard                      pytest exit 1
   accept-blank-names                   pytest exit 1
   unbounded-ids                        pytest exit 1
+  red-gate-accepts-green-tests         pytest exit 1
+  fp-check-allows-mutable-constants    pytest exit 1
   gate-hook-forgets-ruff-config        pytest exit 1
   git-hook-allows-add-all              pytest exit 1
   migration-default-drifts-from-model  pytest exit 1
-OK   control passed, equivalent canary survived, 12 of 12 mutants killed
+OK   control passed, equivalent canary survived, 17 of 17 mutants killed
 ```
 
 The verdict reads pytest's exit code, never its output. Exit 1 means tests
@@ -104,3 +114,57 @@ Then it was removed. Now 0 errors, plus 1 suppression with its reason inline
 $ python -m tools.complexity
   0 function(s) over 100 lines or deeper than 5
 ```
+
+### RED first (`tools/check_red.py`)
+
+Every new test must fail against the code before the change. This branch
+against `main`:
+
+```
+$ python -m tools.check_red --base main
+  base 7e45b323  head HEAD
+  69 new test(s), 1 declared control(s)
+OK   all 68 new test(s) were RED on the base code
+```
+
+The same tool, run over the earlier commits:
+
+```
+$ python -m tools.check_red --base 2723cd8^ --head 2723cd8
+  11 new test(s), 0 declared control(s)
+OK   all 11 new test(s) were RED on the base code
+$ python -m tools.check_red --base 393e8e2^ --head 393e8e2
+  21 new test(s), 0 declared control(s)
+FAIL test_review_findings::test_ui_status_post_from_htmx_with_cookie_still_works passed before the change
+$ python -m tools.check_red --base fb28feb^ --head fb28feb
+  42 new test(s), 0 declared control(s)
+FAIL test_review_findings::test_other_database_errors_are_not_disguised_as_conflicts passed before the change
+```
+
+The two failures are controls: tests written to pin behaviour that must
+*keep* working (the legitimate HTMX path; database errors other than 1020
+still propagating). Those commits predate the `control` marker, so they
+could not say so; both now carry it with a reason. Every other new test in
+the project's history was RED first: 11 of 11, 20 of 21, 41 of 42.
+
+The original two commits (the app as first written) predate any of this
+and cannot be audited: the code and its tests arrived in one commit.
+
+### Functional discipline (`tools/check_fp.py`)
+
+| | findings |
+| --- | --- |
+| `main` before this rule existed | 7, all `mutable-constant` (transition table, error-status map, `NOW`, `SCAN`, `MUTANTS`, two test tables) |
+| now | 0 |
+
+Each rule is shown firing on its target shape and quiet on the nearest
+correct one (`tests/unit/test_fp_discipline.py`), and three mutants prove
+the suite fails when the core is broken: a mutable transition table, an I/O
+import in `app/rules.py`, and a mock in a unit test.
+
+### Mocks
+
+All substitutions are in `tests/integration/test_review_findings.py`, where
+they stage what a real collaborator cannot do on demand: a second request
+landing between a read and a write, MariaDB's 1020 error on SQLite, a lost
+connection. `tests/unit/` has none, and `check_fp` keeps it that way.

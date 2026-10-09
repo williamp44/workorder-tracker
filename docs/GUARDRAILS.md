@@ -6,6 +6,21 @@ not catch its mistakes. What catches them is putting the work where being
 wrong produces a visible disagreement: a test that goes red, a check that
 fires, a database that refuses.
 
+Two principles run through everything here:
+
+1. **Rules are enforced by tools, not by asking the agent to follow them.**
+   A rule written in a prompt or a style guide is a preference; it decays
+   over a long session and nothing notices when it is broken. Every rule this
+   repo cares about is a hook, a lint or type rule, an AST check, a CI gate,
+   or a mutant that turns the suite red. The aim is to **prevent** a defect,
+   or **catch it the moment it happens**: in the same turn if possible, in CI
+   if not.
+2. **Each new defect class becomes a check, so it cannot recur.** When a
+   review or a check finds a kind of mistake nothing was looking for, the fix
+   is not just the code: a rule, a test, a mutant or a hook is added so the
+   same class is caught mechanically next time. The table at the end of this
+   page is that history.
+
 This page explains the method and each check in it. [CHECKS.md](CHECKS.md)
 is the ledger: every defect found, which check found it, and the evidence.
 
@@ -17,9 +32,9 @@ code, and it has to be shown able to fail.
 
 | Rule | Why | In this repo |
 | --- | --- | --- |
-| **State the oracle before the change.** | A result seen first gets rationalised. A result predicted first gets checked. | Every fix in `tests/test_review_findings.py` began as a failing test. The RED output is kept in `docs/evidence/`. |
-| **The oracle must not be derived from the code under test.** | A test generated from the code shares the code's mistakes. | The transition spec in `tests/test_work_orders.py` is written out by hand. The first draft derived it from `ALLOWED_TRANSITIONS`, so a wrong table produced matching wrong tests that passed. |
-| **Prove the oracle can fail.** | A check that has only ever been green has proved nothing. It may never reach the code. | `tools/mutation_check.py` injects 12 bugs. Each must turn the suite red. |
+| **State the oracle before the change.** | A result seen first gets rationalised. A result predicted first gets checked. | `tools/check_red.py` fails a pull request if any new test already passes on the base branch's code. |
+| **The oracle must not be derived from the code under test.** | A test generated from the code shares the code's mistakes. | The transition spec in `tests/spec.py` is written out by hand. The first draft derived it from the table under test, so a wrong table produced matching wrong tests that passed. |
+| **Prove the oracle can fail.** | A check that has only ever been green has proved nothing. It may never reach the code. | `tools/mutation_check.py` injects 17 bugs. Each must turn the suite red. |
 | **Check the checker.** | An instrument is code and has code's defect rate. | A mutant that changes no behaviour must *survive*. When the mutation tool's own self-test was killing every mutant, this canary is what exposes it (CHECKS.md, instrument defect 2). |
 | **Measure a rule before trusting it.** | A plausible rule that is noisy gets switched off within a week, and takes the good rules with it. | Every check had to show two numbers before gating CI: does it fire on the known defects, and is it quiet on the current tree. |
 
@@ -33,6 +48,44 @@ code, and it has to be shown able to fail.
 | Composite foreign key `(site_id, tenant_id)` | the database itself | a cross-tenant write that gets past a bug in the app |
 | Mutation check | a list of known-wrong programs | tests that pass whatever the code does |
 | Equivalent canary mutant | a program that is *not* wrong | a suite that fails for reasons other than behaviour |
+
+### The cycle: RED, GREEN, VERIFY, LOCK, each one checked
+
+| Step | Means | Enforced by |
+| --- | --- | --- |
+| **RED** | A new test fails against the code before the change. | `tools/check_red.py` in CI on every pull request. It builds the base branch's code, lays the new tests over it, and requires each new test to fail. A test that must stay green (it pins behaviour that has to keep working) declares `@pytest.mark.control("reason")`; the reason is required. |
+| **GREEN** | The change makes it pass, and nothing else breaks. | the full suite, on SQLite and on MariaDB |
+| **VERIFY** | Break the code on purpose and watch the test catch it. | `tools/mutation_check.py`: every mutant must be killed, the equivalent canary must survive |
+| **LOCK** | The verified behaviour cannot quietly regress. | the test and its mutant are committed; `guard_gates` stops the agent editing the mutant list, CI or check configs inside a turn |
+
+`check_red` audits history too: `python -m tools.check_red --base <rev>^ --head <rev>`.
+
+### Functional core, imperative shell
+
+Decisions are pure functions over immutable data; I/O lives at the edges.
+
+| Where | What |
+| --- | --- |
+| `app/rules.py` | The transition decision. Pure: no database, no I/O, no async. The table is a read-only mapping of frozensets. |
+| `app/schema_compare.py` | How server defaults compare. Pure. |
+| `app/services.py` | The imperative shell: read, ask `rules`, write. Takes a session and mutates it, which is its job. |
+| request bodies (`app/schemas.py`) | frozen pydantic models |
+| every module-level constant | tuple, frozenset or `MappingProxyType` |
+
+`tools/check_fp.py` enforces it, in the suite and in CI:
+
+| Rule | Applies to | Catches |
+| --- | --- | --- |
+| `mutable-constant` | every file | a module-level `UPPER_CASE` list, dict or set any importer can change |
+| `mutated-argument` | pure modules | a function changing its caller's data (item or attribute assignment, `del`, `.append()` and friends) |
+| `impure-core` | pure modules | importing the database, web or OS layers; `async def`; `global` |
+| `mock-in-unit-test` | `tests/unit/` | `unittest.mock`, `monkeypatch`, `mocker` |
+
+**Mocks:** unit tests (`tests/unit/`) exercise pure code with plain values
+and never mock; a pure function needs no stand-ins. Integration tests
+(`tests/integration/`) use the real database and may substitute a
+collaborator to stage something a real one cannot do on demand, such as a
+second request arriving between a read and a write.
 
 ## The layers: prevent, catch in the turn, catch before merge
 
@@ -75,8 +128,10 @@ function call used as a type annotation, a mistyped lookup table, a
 | Step | Leg | Gate |
 | --- | --- | --- |
 | `ruff check .` | SQLite | zero findings |
-| `pyrefly check` | SQLite | zero errors; the one suppression carries a reason |
+| `pyrefly check` | SQLite | zero errors; each suppression carries a reason |
+| `python -m tools.check_fp` | SQLite | zero findings |
 | `pytest` | SQLite **and** MariaDB | all pass |
+| `python -m tools.check_red` | SQLite, pull requests | every new test RED on the base code |
 | `python tools/mutation_check.py` | SQLite | control passes, canary survives, every mutant killed |
 
 ### 4. Catch what checks cannot: review
@@ -105,3 +160,22 @@ mechanically.
   saw 0 of 4 and produced 2 false positives here, so it was not adopted.
 - **Counts are catch volume, not an error rate.** Nothing here measures how
   many defects a human would have written in the same work.
+
+## Defect classes, and the check that now stops each one
+
+| Defect class | First found by | Now stopped by |
+| --- | --- | --- |
+| A query that forgets its tenant filter | mutation check (by design) | tests + 3 mutants; ruff `ARG001` (an unused `tenant_id`) |
+| A test derived from the code it tests | a mutant that survived | the hand-written spec in `tests/spec.py` |
+| Check-then-act race on a status change | adversarial review | conditional `UPDATE`; test; mutant |
+| Cookie-authenticated POST open to CSRF | adversarial review | `HX-Request` guard; test; mutant |
+| Unbounded ids and blank names | adversarial review | bounded and trimmed input types; tests; mutants |
+| Migration drifting from the models | adversarial review | `alembic check` with server defaults; mutant |
+| Behaviour that only holds on one database | CI on MariaDB | the suite runs on both engines |
+| A function call used as a type, an unchecked `Optional` | pyrefly | pyrefly gate in CI and in the turn (`post_edit_check`) |
+| A mutable module constant | `check_fp` | `mutable-constant` rule; mutant |
+| A test written after the code, or one that cannot fail | `check_red` | `check_red` in CI; mutant |
+| A mutation tool whose kills are not caused by behaviour | a kill nobody predicted | the equivalent canary; mutant runs exclude the tool's own tests |
+| An agent loosening a gate it is judged by | design (measured in another project) | `guard_gates`; mutant |
+| `git add -A`, or discarding uncommitted work | an agent in another project | `guard_git`; mutant |
+| A stale waiver that suppresses nothing | ruff `RUF100` | ruff gate |
