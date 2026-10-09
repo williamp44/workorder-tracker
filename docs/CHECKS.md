@@ -44,6 +44,26 @@ themselves.
 | 7 | On its first run `check_red` failed 3 tests: two hook cases whose ids embedded a path that the unit/integration split had changed (the same tests, renamed), and a test that a *test fixture* was frozen, which only test code can make RED. | `check_red` itself | stable ids; the test of test code removed |
 | 8 | **In CI, `check_red` reported 18 new tests as passing on the base code, for a module the base did not have.** CI installs the project editable (`pip install -e`), and setuptools' import finder served `app.rules` from the working copy to the base tree. The gate failed, but for the wrong reason: it had measured HEAD's code twice. Locally it passed, because the local venv had no editable install. | CI disagreeing with the local run, then reproducing it in a venv installed the way CI installs | `tools/isolation.py`: suites on copied trees run in a subprocess with the editable finders removed; used by `check_red` and the mutation check. `tests/integration/test_isolation.py` was RED under an editable install (`DID NOT RAISE ModuleNotFoundError`) and is green now. It can only go RED where the project is installed editable, which is how CI installs, so it has no mutant (a local mutation run could not kill one). |
 
+## CI evidence
+
+The gates as they ran in GitHub Actions, not only locally.
+
+**PR #2** (functional core, immutable data, RED-first gate), merged into
+`main` as `6d31252`. CI run 37980856090 on the PR's last commit `360bf79`:
+
+| Gate | Result |
+| --- | --- |
+| pytest, SQLite and MariaDB legs | `174 passed` on each |
+| ruff | `All checks passed!` |
+| pyrefly | `0 errors` |
+| `check_fp` | `0 finding(s)` |
+| `check_red` | `OK all 71 new test(s) were RED on the base code`, its first clean run inside GitHub Actions |
+| mutation check | `17 of 17 mutants killed`, canary survived |
+
+The run before it failed in `check_red`, correctly but for the wrong reason
+(instrument defect 8): CI's editable install let the base tree import the
+working copy's code. That failure is why the isolation fix exists.
+
 ## Measurements
 
 ### Mutation check
