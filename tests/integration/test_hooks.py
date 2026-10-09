@@ -61,7 +61,7 @@ def test_editing_a_gate_is_refused(path):
 
 @pytest.mark.parametrize("path", [
     "app/services.py",
-    "tests/integration/test_work_orders.py",  # test-first needs tests writable
+    "tests/test_work_orders.py",  # test-first needs tests writable
     "README.md",
     "tools/complexity.py",
 ])
@@ -99,7 +99,7 @@ def test_staging_everything_is_refused(command):
 
 
 @pytest.mark.parametrize("command", [
-    "git add app/services.py tests/integration/test_work_orders.py",
+    "git add app/services.py tests/test_work_orders.py",
     "git commit -m 'never use git add -A; stage paths'",
     'grep -E "add|commit" notes.txt',
     "git checkout main",
