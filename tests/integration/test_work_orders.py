@@ -1,8 +1,9 @@
 import pytest
 
 from app.models import Status
-from app.services import ALLOWED_TRANSITIONS
+from app.rules import ALLOWED_TRANSITIONS
 from tests.conftest import make_order, make_site
+from tests.spec import EXPECTED_ALLOWED
 
 
 async def test_create_work_order_defaults(client, tenants):
@@ -55,23 +56,14 @@ async def test_happy_path_open_to_done(client, tenants):
         assert r.json()["status"] == status
 
 
-# The spec, written out independently of app.services.ALLOWED_TRANSITIONS.
-# Deriving test cases from the table under test would make this a tautology:
-# a wrong table would generate matching wrong tests and still pass.
-EXPECTED_ALLOWED = {
-    ("open", "in_progress"),
-    ("open", "cancelled"),
-    ("in_progress", "done"),
-    ("in_progress", "open"),
-    ("in_progress", "cancelled"),
-}
-
-DISALLOWED = [
+# EXPECTED_ALLOWED is the hand-written spec (tests/spec.py), independent of
+# the table under test.
+DISALLOWED = tuple(
     (src, dst)
     for src in Status
     for dst in Status
     if (src.value, dst.value) not in EXPECTED_ALLOWED
-]
+)
 
 
 def test_transition_table_matches_spec():

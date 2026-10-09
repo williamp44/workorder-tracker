@@ -5,7 +5,7 @@ current_timestamp(), SQLite says CURRENT_TIMESTAMP, the model says now().
 Those are one default. Anything else is compared as written.
 """
 
-NOW = {"now()", "current_timestamp()", "current_timestamp"}
+NOW = frozenset({"now()", "current_timestamp()", "current_timestamp"})
 
 
 def _normal(sql: str | None) -> str | None:

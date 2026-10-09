@@ -34,7 +34,7 @@ class Mutant:
     equivalent: bool = False
 
 
-MUTANTS = [
+MUTANTS = (
     Mutant(
         "canary-docstring-only",
         "app/services.py",
@@ -62,9 +62,27 @@ MUTANTS = [
     ),
     Mutant(
         "allow-done-to-open",
-        "app/services.py",
-        "Status.done: set(),",
-        "Status.done: {Status.open},",
+        "app/rules.py",
+        "Status.done: frozenset(),",
+        "Status.done: frozenset({Status.open}),",
+    ),
+    Mutant(
+        "transition-table-made-mutable",
+        "app/rules.py",
+        "= MappingProxyType({\n    Status.open:",
+        "= ({\n    Status.open:",
+    ),
+    Mutant(
+        "rules-core-does-io",
+        "app/rules.py",
+        "from types import MappingProxyType\n",
+        "import os\nfrom types import MappingProxyType\n",
+    ),
+    Mutant(
+        "unit-test-uses-a-mock",
+        "tests/unit/test_rules.py",
+        "def test_a_transition_set_cannot_be_extended_at_run_time():",
+        "def test_a_transition_set_cannot_be_extended_at_run_time(monkeypatch):",
     ),
     Mutant(
         "unconditional-status-write",
@@ -114,7 +132,7 @@ MUTANTS = [
         'sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False)',
         'sa.Column("created_at", sa.DateTime(), server_default=sa.text("\'2000-01-01\'"), nullable=False)',
     ),
-]
+)
 
 
 class MutantDoesNotApply(Exception):

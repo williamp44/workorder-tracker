@@ -65,6 +65,7 @@ async def test_ui_status_post_with_only_a_cookie_is_refused(client, tenants):
     assert r.json()["status"] == "open"
 
 
+@pytest.mark.control("the legitimate HTMX path must keep working after the CSRF guard")
 async def test_ui_status_post_from_htmx_with_cookie_still_works(client, tenants):
     a, _ = tenants
     order = await make_order(client, a, await make_site(client, a))
@@ -79,18 +80,14 @@ async def test_ui_status_post_from_htmx_with_cookie_still_works(client, tenants)
 
 
 # Found by: Linus review and adversarial review (check-then-insert race gave a 500).
-async def test_duplicate_site_that_races_past_the_check_is_still_a_conflict(
-    tenants, session_factory
-):
+# There is no pre-check left to race past: the unique constraint is the only
+# check, so a duplicate from a concurrent request takes this same path.
+@pytest.mark.control("renamed when the dead mock was removed; the behaviour was fixed in an earlier commit")
+async def test_duplicate_site_is_a_conflict_from_the_constraint(tenants, session_factory):
     a, _ = tenants
     async with session_factory() as s:
         await services.create_site(s, a.id, "Lobby")
     async with session_factory() as s:
-
-        async def nothing_found(*_args, **_kwargs):
-            return None  # the other request inserted after this one looked
-
-        s.scalar = nothing_found  # type: ignore[method-assign]
         with pytest.raises(services.Conflict):
             await services.create_site(s, a.id, "Lobby")
 
@@ -156,6 +153,7 @@ async def test_a_snapshot_conflict_from_the_database_is_a_409_not_a_500(
             await services.change_status(s, a.id, wo_id, Status.done)
 
 
+@pytest.mark.control("only error 1020 becomes a conflict; every other database error must still propagate")
 async def test_other_database_errors_are_not_disguised_as_conflicts(
     tenants, session_factory, monkeypatch
 ):

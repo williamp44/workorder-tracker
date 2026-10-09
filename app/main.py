@@ -1,3 +1,6 @@
+from collections.abc import Mapping
+from types import MappingProxyType
+
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
@@ -8,11 +11,11 @@ app = FastAPI(title="Work-Order Tracker")
 
 # One place maps service errors to HTTP. Another tenant's row raises NotFound,
 # the same as a missing row, so it is a 404 and never a 403.
-STATUS_FOR: dict[type[Exception], int] = {
+STATUS_FOR: Mapping[type[Exception], int] = MappingProxyType({
     services.NotFound: status.HTTP_404_NOT_FOUND,
     services.InvalidTransition: status.HTTP_409_CONFLICT,
     services.Conflict: status.HTTP_409_CONFLICT,
-}
+})
 
 
 async def service_error(_: Request, exc: Exception) -> JSONResponse:

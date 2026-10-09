@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Priority, Site, Status, WorkOrder
+from app.rules import can_transition
 
 
 class NotFound(Exception):
@@ -26,12 +27,6 @@ class Conflict(Exception):
 
 RECORD_CHANGED = 1020  # MariaDB: "Record has changed since last read"
 
-ALLOWED_TRANSITIONS: dict[Status, set[Status]] = {
-    Status.open: {Status.in_progress, Status.cancelled},
-    Status.in_progress: {Status.done, Status.open, Status.cancelled},
-    Status.done: set(),
-    Status.cancelled: set(),
-}
 
 
 async def create_site(session: AsyncSession, tenant_id: int, name: str) -> Site:
@@ -108,7 +103,7 @@ async def change_status(
 ) -> WorkOrder:
     wo = await get_work_order(session, tenant_id, wo_id)
     current = wo.status
-    if new_status not in ALLOWED_TRANSITIONS[current]:
+    if not can_transition(current, new_status):
         raise InvalidTransition(f"Cannot move from {current.value} to {new_status.value}")
     # Write only if the status is still the one the check above approved.
     # Another request may have moved it since we read it; a plain write would

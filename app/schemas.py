@@ -20,6 +20,7 @@ Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, ma
 
 
 class SiteIn(BaseModel):
+    model_config = ConfigDict(frozen=True)
     name: SiteName
 
 
@@ -30,6 +31,7 @@ class SiteOut(BaseModel):
 
 
 class WorkOrderIn(BaseModel):
+    model_config = ConfigDict(frozen=True)
     site_id: RowId
     title: Title
     description: str = ""
@@ -37,6 +39,7 @@ class WorkOrderIn(BaseModel):
 
 
 class StatusChange(BaseModel):
+    model_config = ConfigDict(frozen=True)
     status: Status
 
 

@@ -8,7 +8,7 @@ from app import services
 from app.db import get_session
 from app.models import Status, Tenant
 from app.schemas import PathId
-from app.services import ALLOWED_TRANSITIONS
+from app.rules import ALLOWED_TRANSITIONS
 from app.tenancy import get_current_tenant
 
 templates = Jinja2Templates(directory=Path(__file__).resolve().parent.parent / "templates")
