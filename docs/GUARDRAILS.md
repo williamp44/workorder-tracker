@@ -128,7 +128,7 @@ function call used as a type annotation, a mistyped lookup table, a
 | Step | Leg | Gate |
 | --- | --- | --- |
 | `ruff check .` | SQLite | zero findings |
-| `pyrefly check` | SQLite | zero errors; each suppression carries a reason |
+| `python -m tools.check_types` | SQLite | zero errors or warnings, project and hooks; each suppression carries a reason |
 | `python -m tools.check_fp` | SQLite | zero findings |
 | `pytest` | SQLite **and** MariaDB | all pass |
 | `python -m tools.check_red` | SQLite, pull requests | every new test RED on the base code |
@@ -216,4 +216,5 @@ again. That is how every row of the table at the end of this page got there.
 | An agent loosening a gate it is judged by | design (measured in another project) | `guard_gates`; mutant |
 | `git add -A`, or discarding uncommitted work | an agent in another project | `guard_git`; mutant |
 | A stale waiver that suppresses nothing | ruff `RUF100` | ruff gate |
+| A gate whose scope silently shrinks (pyrefly skipping `.claude/hooks`) | reading CI's output, not its exit code | `tools/check_types.py`; a planted error it must find; 2 mutants |
 | A check that measures the working copy when it means to measure a copy | CI disagreeing with a local run | `tools/isolation.py`; `test_isolation.py` (RED under an editable install, as CI installs) |

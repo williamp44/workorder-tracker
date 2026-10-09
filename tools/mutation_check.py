@@ -129,6 +129,18 @@ MUTANTS = (
         "if isinstance(t, ast.Name) and CONSTANT.match(t.id) and not _is_mutable(value):",
     ),
     Mutant(
+        "type-check-skips-the-hooks",
+        "tools/check_types.py",
+        'return [*PYREFLY, "--search-path", ".claude/hooks", *hooks]',
+        'return [*PYREFLY, "--search-path", ".claude/hooks"]',
+    ),
+    Mutant(
+        "type-check-on-lenient-preset",
+        "tools/check_types.py",
+        '"--preset", "default",',
+        '"--preset", "basic",',
+    ),
+    Mutant(
         "gate-hook-forgets-ruff-config",
         ".claude/hooks/guard_gates.py",
         '    ("ruff.toml",),\n',

@@ -29,7 +29,7 @@ def findings(path: Path, root: Path) -> list[str]:
         out.append(f"ruff could not run (exit {lint.returncode}): {lint.stderr.strip()[:200]}")
     out += [ln for ln in lint.stdout.splitlines() if ln.strip()]
     if root in path.resolve().parents:
-        types = _run(["pyrefly", "check", str(path)], root)
+        types = _run(["pyrefly", "check", "--preset", "default", str(path)], root)
         out += [ln for ln in types.stdout.splitlines() if ln.startswith("ERROR")]
     return out
 

@@ -1,5 +1,9 @@
 # Explicit config: without one, pyrefly falls back to a lenient preset and
 # reports nothing on a None passed to a str parameter. Its existence is
 # load-bearing (measured on another codebase; see docs/CHECKS.md).
-project-includes = ["app", "scripts", "tools", "tests", "alembic", ".claude/hooks"]
+#
+# .claude/hooks is NOT listed: pyrefly skips hidden directories whatever the
+# excludes say, so listing it here only claimed coverage it never had (found
+# by reading CI's output; CHECKS.md). CI checks the hooks as explicit files.
+project-includes = ["app", "scripts", "tools", "tests", "alembic"]
 search-path = ["."]
