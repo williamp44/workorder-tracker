@@ -141,6 +141,18 @@ MUTANTS = (
         '"--preset", "basic",',
     ),
     Mutant(
+        "diagnostic-guard-reads-the-documented-key",
+        ".claude/hooks/diagnostic_scan.py",
+        '    tr = data.get("tool_response")\n    if isinstance(tr, dict):',
+        '    tr = data.get("tool_output_response")\n    if isinstance(tr, dict):',
+    ),
+    Mutant(
+        "diagnostic-guard-fires-on-git-advisory",
+        ".claude/hooks/diagnostic_scan.py",
+        '    r"LF will be replaced by CRLF",',
+        '    r"LF will never be replaced",',
+    ),
+    Mutant(
         "gate-hook-forgets-ruff-config",
         ".claude/hooks/guard_gates.py",
         '    ("ruff.toml",),\n',

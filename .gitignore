@@ -5,3 +5,4 @@ __pycache__/
 .venv/
 *.db
 .env
+.claude/hooks/.fired.log
