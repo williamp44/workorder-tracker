@@ -34,9 +34,22 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
 
+      - name: Lint (ruff)
+        if: matrix.db == 'sqlite'
+        run: ruff check .
+
+      - name: Types (pyrefly)
+        if: matrix.db == 'sqlite'
+        run: pyrefly check
+
       - name: Test (SQLite)
         if: matrix.db == 'sqlite'
         run: pytest -v
+
+      # The suite must FAIL when tenant filters or transition rules are broken.
+      - name: Mutation check (SQLite)
+        if: matrix.db == 'sqlite'
+        run: python tools/mutation_check.py
 
       - name: Test (MariaDB)
         if: matrix.db == 'mariadb'

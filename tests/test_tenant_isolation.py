@@ -13,7 +13,8 @@ async def test_missing_api_key_is_rejected(client):
     assert r.status_code == 401
 
 
-async def test_unknown_api_key_is_rejected(client, tenants):
+@pytest.mark.usefixtures("tenants")  # real keys exist, so 401 is not just an empty table
+async def test_unknown_api_key_is_rejected(client):
     r = await client.get("/api/work-orders", headers={"X-API-Key": "not-a-real-key"})
     assert r.status_code == 401
 
@@ -73,7 +74,7 @@ async def test_ui_status_change_is_tenant_scoped(client, tenants):
     r = await client.post(
         f"/ui/work-orders/{order['id']}/status",
         data={"new_status": "in_progress"},
-        headers=b.headers,
+        headers={**b.headers, "HX-Request": "true"},  # past the CSRF guard, to the tenant check
     )
     assert r.status_code == 404
 

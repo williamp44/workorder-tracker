@@ -1,0 +1,23 @@
+# Rule set carried over from a larger codebase where each family earned its
+# place by catching a real defect. Measured on this repo before adopting:
+# see "Checks and what they can see" in README.md.
+target-version = "py311"
+
+[lint]
+select = [
+    "F",                 # pyflakes: undefined names, unused imports and locals
+    "E4", "E7", "E9",    # real errors, not whitespace opinions
+    "B",                 # bugbear: zip without strict=, mutable defaults, ...
+    "ARG",               # unused arguments: a flag accepted and read by nobody
+    "DTZ011",            # date.today(): timezone-naive "today"
+    "RUF",
+]
+
+[lint.flake8-bugbear]
+# FastAPI's dependency markers are evaluated once by design; B008 on them is
+# the idiom, not a defect (18 findings, 0 real, measured before tuning).
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Form", "fastapi.Query"]
+
+[lint.per-file-ignores]
+# Alembic's env.py must put the repo on sys.path before importing app.
+"alembic/env.py" = ["E402"]
