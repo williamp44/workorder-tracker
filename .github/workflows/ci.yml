@@ -28,6 +28,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # check_red needs the base branch
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -46,10 +48,19 @@ jobs:
         if: matrix.db == 'sqlite'
         run: pytest -v
 
+      - name: FP discipline (check_fp)
+        if: matrix.db == 'sqlite'
+        run: python -m tools.check_fp
+
+      # Every new test must fail against the base branch's code.
+      - name: RED first (check_red)
+        if: matrix.db == 'sqlite' && github.event_name == 'pull_request'
+        run: python -m tools.check_red --base origin/${{ github.base_ref }}
+
       # The suite must FAIL when tenant filters or transition rules are broken.
       - name: Mutation check (SQLite)
         if: matrix.db == 'sqlite'
-        run: python tools/mutation_check.py
+        run: python -m tools.mutation_check
 
       - name: Test (MariaDB)
         if: matrix.db == 'mariadb'

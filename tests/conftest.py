@@ -18,6 +18,22 @@ from app.main import app
 from app.models import Tenant
 from app.tenancy import hash_key
 
+def pytest_collection_modifyitems(items):
+    """Record controls in the JUnit report for tools/check_red.py.
+
+    A control is a test that is green before the change by design: it pins
+    behaviour that must keep working. It must say why.
+    """
+    for item in items:
+        marker = item.get_closest_marker("control")
+        if marker is None:
+            continue
+        reason = marker.args[0] if marker.args else ""
+        if not str(reason).strip():
+            raise pytest.UsageError(f"{item.nodeid}: @pytest.mark.control needs a reason")
+        item.user_properties.append(("control", reason))
+
+
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite+aiosqlite://")
 
 
@@ -53,7 +69,7 @@ async def client(session_factory):
     app.dependency_overrides.clear()
 
 
-@dataclass
+@dataclass(frozen=True)
 class TenantCtx:
     id: int
     key: str

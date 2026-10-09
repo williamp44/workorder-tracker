@@ -11,7 +11,7 @@ import pytest
 
 from tools.mutation_check import MUTANTS, MutantDoesNotApply, apply, verdict
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_apply_replaces_the_single_occurrence():

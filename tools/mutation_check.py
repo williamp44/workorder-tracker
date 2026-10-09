@@ -1,6 +1,6 @@
 """Prove the test suite fails when the code is wrong.
 
-    python tools/mutation_check.py
+    python -m tools.mutation_check
 
 For each mutant below: copy the repo to a temp dir, inject the bug into the
 copy, run pytest there, and require it to FAIL. An unmutated copy runs first
@@ -16,6 +16,8 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from tools.isolation import pytest_command
 
 ROOT = Path(__file__).resolve().parent.parent
 SKIP = shutil.ignore_patterns(".git", ".venv", "__pycache__", ".pytest_cache", "*.db")
@@ -34,7 +36,7 @@ class Mutant:
     equivalent: bool = False
 
 
-MUTANTS = [
+MUTANTS = (
     Mutant(
         "canary-docstring-only",
         "app/services.py",
@@ -62,9 +64,27 @@ MUTANTS = [
     ),
     Mutant(
         "allow-done-to-open",
-        "app/services.py",
-        "Status.done: set(),",
-        "Status.done: {Status.open},",
+        "app/rules.py",
+        "Status.done: frozenset(),",
+        "Status.done: frozenset({Status.open}),",
+    ),
+    Mutant(
+        "transition-table-made-mutable",
+        "app/rules.py",
+        "= MappingProxyType({\n    Status.open:",
+        "= ({\n    Status.open:",
+    ),
+    Mutant(
+        "rules-core-does-io",
+        "app/rules.py",
+        "from types import MappingProxyType\n",
+        "import os\nfrom types import MappingProxyType\n",
+    ),
+    Mutant(
+        "unit-test-uses-a-mock",
+        "tests/unit/test_rules.py",
+        "def test_a_transition_set_cannot_be_extended_at_run_time():",
+        "def test_a_transition_set_cannot_be_extended_at_run_time(monkeypatch):",
     ),
     Mutant(
         "unconditional-status-write",
@@ -97,6 +117,18 @@ MUTANTS = [
         "MAX_ID = 2**63 - 1",
     ),
     Mutant(
+        "red-gate-accepts-green-tests",
+        "tools/check_red.py",
+        'if outcome == "GREEN":',
+        'if outcome == "NEVER":',
+    ),
+    Mutant(
+        "fp-check-allows-mutable-constants",
+        "tools/check_fp.py",
+        "if isinstance(t, ast.Name) and CONSTANT.match(t.id) and _is_mutable(value):",
+        "if isinstance(t, ast.Name) and CONSTANT.match(t.id) and not _is_mutable(value):",
+    ),
+    Mutant(
         "gate-hook-forgets-ruff-config",
         ".claude/hooks/guard_gates.py",
         '    ("ruff.toml",),\n',
@@ -114,7 +146,7 @@ MUTANTS = [
         'sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False)',
         'sa.Column("created_at", sa.DateTime(), server_default=sa.text("\'2000-01-01\'"), nullable=False)',
     ),
-]
+)
 
 
 class MutantDoesNotApply(Exception):
@@ -152,8 +184,8 @@ def run_suite(tree: Path) -> int:
         # The mutation tool's own tests are excluded: in a mutated copy, the
         # test that every mutant still applies fails by construction, which
         # once made every mutant look killed whatever the app tests did.
-        [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider",
-         "--ignore=tests/test_mutation_check.py"],
+        pytest_command("-q", "-x", "-p", "no:cacheprovider",
+                       "--ignore=tests/unit/test_mutation_check.py"),
         cwd=tree,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

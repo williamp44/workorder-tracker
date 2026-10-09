@@ -7,7 +7,7 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _config(url: str) -> Config:

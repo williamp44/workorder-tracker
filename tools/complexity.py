@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SCAN = ["app", "scripts", "tools", "tests", "alembic"]
+SCAN = ("app", "scripts", "tools", "tests", "alembic")
 
 LONG = 100
 DEEP = 5
