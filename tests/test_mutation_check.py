@@ -59,3 +59,19 @@ def test_verdict_treats_a_pytest_usage_error_as_not_killed():
     assert verdict(control_exit=0, mutant_exits={"m1": 4}) == [
         "m1 inconclusive: pytest exited 4, not 1"
     ]
+
+
+def test_verdict_fails_when_an_equivalent_mutant_is_killed():
+    # An equivalent mutant changes nothing a test can observe. If the suite
+    # fails on it, something other than app behaviour is failing the suite,
+    # and every other "kill" in the run is suspect.
+    problems = verdict(control_exit=0, mutant_exits={"canary": 1}, equivalent={"canary"})
+    assert problems == ["canary was killed but changes no behaviour: the kills are not trustworthy"]
+
+
+def test_verdict_accepts_a_surviving_equivalent_mutant():
+    assert verdict(control_exit=0, mutant_exits={"canary": 0, "m1": 1}, equivalent={"canary"}) == []
+
+
+def test_the_run_includes_an_equivalent_mutant():
+    assert any(m.equivalent for m in MUTANTS)

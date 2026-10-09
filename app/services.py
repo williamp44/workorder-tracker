@@ -5,7 +5,8 @@ another tenant is indistinguishable from a row that doesn't exist (NotFound),
 so callers can't probe for other tenants' IDs.
 """
 
-from sqlalchemy import select
+from sqlalchemy import CursorResult, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Priority, Site, Status, WorkOrder
@@ -32,14 +33,15 @@ ALLOWED_TRANSITIONS: dict[Status, set[Status]] = {
 
 
 async def create_site(session: AsyncSession, tenant_id: int, name: str) -> Site:
-    exists = await session.scalar(
-        select(Site.id).where(Site.tenant_id == tenant_id, Site.name == name)
-    )
-    if exists:
-        raise Conflict(f"Site {name!r} already exists")
+    # The unique constraint (tenant_id, name) is the check. A SELECT first
+    # would race: two requests can both see "no such site" and both insert.
     site = Site(tenant_id=tenant_id, name=name)
     session.add(site)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise Conflict(f"Site {name!r} already exists") from None
     return site
 
 
@@ -103,9 +105,21 @@ async def change_status(
     session: AsyncSession, tenant_id: int, wo_id: int, new_status: Status
 ) -> WorkOrder:
     wo = await get_work_order(session, tenant_id, wo_id)
-    if new_status not in ALLOWED_TRANSITIONS[wo.status]:
-        raise InvalidTransition(f"Cannot move from {wo.status.value} to {new_status.value}")
-    wo.status = new_status
+    current = wo.status
+    if new_status not in ALLOWED_TRANSITIONS[current]:
+        raise InvalidTransition(f"Cannot move from {current.value} to {new_status.value}")
+    # Write only if the status is still the one the check above approved.
+    # Another request may have moved it since we read it; a plain write would
+    # let done -> cancelled through without ever consulting the table.
+    result = await session.execute(
+        update(WorkOrder)
+        .where(WorkOrder.id == wo_id, WorkOrder.tenant_id == tenant_id, WorkOrder.status == current)
+        .values(status=new_status)
+    )
+    assert isinstance(result, CursorResult)  # an UPDATE always returns one
+    if result.rowcount != 1:
+        await session.rollback()
+        raise InvalidTransition(f"Work order is no longer {current.value}; reload and retry")
     await session.commit()
     await session.refresh(wo)
     return wo

@@ -47,11 +47,14 @@ def functions(path: Path) -> list[tuple[str, int, int, int]]:
     """(name, first line, length, depth) for every function in one file.
     A file that does not parse raises: an unreadable file is not a clean one."""
     tree = ast.parse(path.read_text(), filename=str(path))
-    return [
-        (n.name, n.lineno, n.end_lineno - n.lineno + 1, nesting(n))
-        for n in ast.walk(tree)
-        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
+    out = []
+    for n in ast.walk(tree):
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if n.end_lineno is None:  # ast.parse always sets it; a None is a broken parser
+            raise ValueError(f"{path}:{n.lineno}: {n.name} has no end line")
+        out.append((n.name, n.lineno, n.end_lineno - n.lineno + 1, nesting(n)))
+    return out
 
 
 def survey(root: Path = ROOT) -> list[tuple[str, str, int, int, int]]:

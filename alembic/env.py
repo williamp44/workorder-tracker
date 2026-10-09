@@ -69,6 +69,9 @@ def do_run_migrations(connection: Connection) -> None:
         target_metadata=target_metadata,
         render_as_batch=connection.dialect.name == "sqlite",
         compare_type=True,
+        # Without this, `alembic check` ignores server defaults, so a migration
+        # whose default drifts from the model passes (mutation check found it).
+        compare_server_default=True,
     )
 
     with context.begin_transaction():

@@ -1,0 +1,14 @@
+    E               sqlite3.IntegrityError: UNIQUE constraint failed: sites.tenant_id, sites.name
+    E               sqlalchemy.exc.IntegrityError: (sqlite3.IntegrityError) UNIQUE constraint failed: sites.tenant_id, sites.name
+    FAILED tests/test_review_findings.py::test_status_change_refuses_when_another_request_moved_it_first
+    FAILED tests/test_review_findings.py::test_ui_status_post_with_only_a_cookie_is_refused
+    FAILED tests/test_review_findings.py::test_duplicate_site_that_races_past_the_check_is_still_a_conflict
+    FAILED tests/test_review_findings.py::test_out_of_range_ids_are_rejected_not_crashed[GET-/api/work-orders/2147483648]
+    FAILED tests/test_review_findings.py::test_out_of_range_ids_are_rejected_not_crashed[PATCH-/api/work-orders/2147483648/status]
+    FAILED tests/test_review_findings.py::test_out_of_range_ids_are_rejected_not_crashed[GET-/api/work-orders/99999999999999999999]
+    FAILED tests/test_review_findings.py::test_out_of_range_ids_are_rejected_not_crashed[GET-/api/work-orders/0]
+    FAILED tests/test_review_findings.py::test_out_of_range_site_id_in_body_is_rejected
+    FAILED tests/test_review_findings.py::test_blank_names_are_rejected[/api/sites-body0]
+    FAILED tests/test_review_findings.py::test_blank_names_are_rejected[/api/work-orders-body1]
+    FAILED tests/test_review_findings.py::test_names_are_stored_trimmed - Asserti...
+    11 failed, 1 passed in 1.39s

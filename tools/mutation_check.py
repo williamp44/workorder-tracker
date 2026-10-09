@@ -29,9 +29,19 @@ class Mutant:
     path: str
     old: str
     new: str
+    # An equivalent mutant changes nothing observable and MUST survive. If it
+    # is killed, the suite is failing for some reason other than behaviour.
+    equivalent: bool = False
 
 
 MUTANTS = [
+    Mutant(
+        "canary-docstring-only",
+        "app/services.py",
+        '"""Tenant-scoped data access.',
+        '"""Tenant-scoped data access (canary).',
+        equivalent=True,
+    ),
     Mutant(
         "drop-tenant-filter-get-work-order",
         "app/services.py",
@@ -56,6 +66,36 @@ MUTANTS = [
         "Status.done: set(),",
         "Status.done: {Status.open},",
     ),
+    Mutant(
+        "unconditional-status-write",
+        "app/services.py",
+        ".where(WorkOrder.id == wo_id, WorkOrder.tenant_id == tenant_id, WorkOrder.status == current)",
+        ".where(WorkOrder.id == wo_id, WorkOrder.tenant_id == tenant_id)",
+    ),
+    Mutant(
+        "drop-csrf-guard",
+        "app/routers/ui.py",
+        '@router.post("/ui/work-orders/{wo_id}/status", dependencies=[Depends(require_htmx)])',
+        '@router.post("/ui/work-orders/{wo_id}/status")',
+    ),
+    Mutant(
+        "accept-blank-names",
+        "app/schemas.py",
+        "strip_whitespace=True, min_length=1, max_length=120",
+        "strip_whitespace=True, min_length=0, max_length=120",
+    ),
+    Mutant(
+        "unbounded-ids",
+        "app/schemas.py",
+        "MAX_ID = 2**31 - 1",
+        "MAX_ID = 2**63 - 1",
+    ),
+    Mutant(
+        "migration-default-drifts-from-model",
+        "alembic/versions/0001_initial_schema.py",
+        'sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False)',
+        'sa.Column("created_at", sa.DateTime(), server_default=sa.text("\'2000-01-01\'"), nullable=False)',
+    ),
 ]
 
 
@@ -71,13 +111,18 @@ def apply(source: str, old: str, new: str) -> str:
     return source.replace(old, new)
 
 
-def verdict(control_exit: int, mutant_exits: dict[str, int]) -> list[str]:
+def verdict(
+    control_exit: int, mutant_exits: dict[str, int], equivalent: frozenset[str] | set[str] = frozenset()
+) -> list[str]:
     """Problems with the run; an empty list means the suite has teeth."""
     if control_exit != 0:
         return ["control failed: the suite is red without any mutation"]
     problems = []
     for name, code in mutant_exits.items():
-        if code == 0:
+        if name in equivalent:
+            if code != 0:
+                problems.append(f"{name} was killed but changes no behaviour: the kills are not trustworthy")
+        elif code == 0:
             problems.append(f"{name} survived: the suite passed with the bug in place")
         elif code != TESTS_FAILED:
             problems.append(f"{name} inconclusive: pytest exited {code}, not {TESTS_FAILED}")
@@ -86,7 +131,11 @@ def verdict(control_exit: int, mutant_exits: dict[str, int]) -> list[str]:
 
 def run_suite(tree: Path) -> int:
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider"],
+        # The mutation tool's own tests are excluded: in a mutated copy, the
+        # test that every mutant still applies fails by construction, which
+        # once made every mutant look killed whatever the app tests did.
+        [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider",
+         "--ignore=tests/test_mutation_check.py"],
         cwd=tree,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -112,11 +161,12 @@ def main() -> int:
         for m in MUTANTS:
             exits[m.name] = run_on_copy(m)
             print(f"  {m.name:36} pytest exit {exits[m.name]}")
-    problems = verdict(control, exits)
+    problems = verdict(control, exits, {m.name for m in MUTANTS if m.equivalent})
     for p in problems:
         print(f"FAIL {p}")
     if not problems:
-        print(f"OK   control passed, {len(exits)} of {len(MUTANTS)} mutants killed")
+        real = [m for m in MUTANTS if not m.equivalent]
+        print(f"OK   control passed, equivalent canary survived, {len(real)} of {len(real)} mutants killed")
     return 1 if problems else 0
 
 

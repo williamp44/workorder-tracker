@@ -1,0 +1,5 @@
+# Explicit config: without one, pyrefly falls back to a lenient preset and
+# reports nothing on a None passed to a str parameter. Its existence is
+# load-bearing (measured on another codebase; see docs/CHECKS.md).
+project-includes = ["app", "scripts", "tools", "tests", "alembic"]
+search-path = ["."]
