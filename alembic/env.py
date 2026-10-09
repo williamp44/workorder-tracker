@@ -24,6 +24,7 @@ import os
 
 import app.models  # noqa: F401  (registers tables on Base.metadata)
 from app.db import Base
+from app.schema_compare import same_server_default
 
 target_metadata = Base.metadata
 
@@ -63,6 +64,13 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _compare_server_default(
+    _context, _inspected_column, _metadata_column, inspected_default, _metadata_default, rendered_default
+):
+    """True when the defaults differ, with "now" equal in every dialect's spelling."""
+    return not same_server_default(inspected_default, rendered_default)
+
+
 def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
@@ -71,7 +79,7 @@ def do_run_migrations(connection: Connection) -> None:
         compare_type=True,
         # Without this, `alembic check` ignores server defaults, so a migration
         # whose default drifts from the model passes (mutation check found it).
-        compare_server_default=True,
+        compare_server_default=_compare_server_default,
     )
 
     with context.begin_transaction():

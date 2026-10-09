@@ -132,3 +132,45 @@ async def test_names_are_stored_trimmed(client, tenants):
     a, _ = tenants
     r = await client.post("/api/sites", json={"name": "  Lobby  "}, headers=a.headers)
     assert r.json()["name"] == "Lobby"
+
+
+# Found by: CI on MariaDB 11 (snapshot isolation raised 1020 -> a 500).
+async def test_a_snapshot_conflict_from_the_database_is_a_409_not_a_500(
+    tenants, session_factory, monkeypatch
+):
+    from sqlalchemy.exc import OperationalError
+
+    a, _ = tenants
+    wo_id = await _order_in_progress(session_factory, a.id)
+    async with session_factory() as s:
+        real_execute = s.execute
+
+        async def conflict_on_update(statement, *args, **kwargs):
+            if getattr(statement, "is_update", False):
+                orig = Exception(1020, "Record has changed since last read in table 'work_orders'")
+                raise OperationalError(str(statement), {}, orig)
+            return await real_execute(statement, *args, **kwargs)
+
+        monkeypatch.setattr(s, "execute", conflict_on_update)
+        with pytest.raises(services.InvalidTransition):
+            await services.change_status(s, a.id, wo_id, Status.done)
+
+
+async def test_other_database_errors_are_not_disguised_as_conflicts(
+    tenants, session_factory, monkeypatch
+):
+    from sqlalchemy.exc import OperationalError
+
+    a, _ = tenants
+    wo_id = await _order_in_progress(session_factory, a.id)
+    async with session_factory() as s:
+        real_execute = s.execute
+
+        async def lost_connection(statement, *args, **kwargs):
+            if getattr(statement, "is_update", False):
+                raise OperationalError(str(statement), {}, Exception(2013, "Lost connection"))
+            return await real_execute(statement, *args, **kwargs)
+
+        monkeypatch.setattr(s, "execute", lost_connection)
+        with pytest.raises(OperationalError):
+            await services.change_status(s, a.id, wo_id, Status.done)

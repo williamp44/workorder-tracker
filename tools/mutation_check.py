@@ -73,6 +73,12 @@ MUTANTS = [
         ".where(WorkOrder.id == wo_id, WorkOrder.tenant_id == tenant_id)",
     ),
     Mutant(
+        "snapshot-conflict-becomes-500",
+        "app/services.py",
+        "RECORD_CHANGED = 1020",
+        "RECORD_CHANGED = 9999",
+    ),
+    Mutant(
         "drop-csrf-guard",
         "app/routers/ui.py",
         '@router.post("/ui/work-orders/{wo_id}/status", dependencies=[Depends(require_htmx)])',
@@ -89,6 +95,18 @@ MUTANTS = [
         "app/schemas.py",
         "MAX_ID = 2**31 - 1",
         "MAX_ID = 2**63 - 1",
+    ),
+    Mutant(
+        "gate-hook-forgets-ruff-config",
+        ".claude/hooks/guard_gates.py",
+        '    ("ruff.toml",),\n',
+        "",
+    ),
+    Mutant(
+        "git-hook-allows-add-all",
+        ".claude/hooks/guard_git.py",
+        'if any(a in ("-A", "--all", "-u", "--update") for a in args):',
+        'if any(a in ("-u", "--update") for a in args):',
     ),
     Mutant(
         "migration-default-drifts-from-model",

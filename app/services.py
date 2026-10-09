@@ -6,7 +6,7 @@ so callers can't probe for other tenants' IDs.
 """
 
 from sqlalchemy import CursorResult, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Priority, Site, Status, WorkOrder
@@ -23,6 +23,8 @@ class InvalidTransition(Exception):
 class Conflict(Exception):
     pass
 
+
+RECORD_CHANGED = 1020  # MariaDB: "Record has changed since last read"
 
 ALLOWED_TRANSITIONS: dict[Status, set[Status]] = {
     Status.open: {Status.in_progress, Status.cancelled},
@@ -111,11 +113,19 @@ async def change_status(
     # Write only if the status is still the one the check above approved.
     # Another request may have moved it since we read it; a plain write would
     # let done -> cancelled through without ever consulting the table.
-    result = await session.execute(
-        update(WorkOrder)
-        .where(WorkOrder.id == wo_id, WorkOrder.tenant_id == tenant_id, WorkOrder.status == current)
-        .values(status=new_status)
-    )
+    try:
+        result = await session.execute(
+            update(WorkOrder)
+            .where(WorkOrder.id == wo_id, WorkOrder.tenant_id == tenant_id, WorkOrder.status == current)
+            .values(status=new_status)
+        )
+    except OperationalError as e:
+        # MariaDB 11 detects the same race itself, under snapshot isolation,
+        # and raises 1020 instead of updating zero rows. Same conflict.
+        if e.orig is None or e.orig.args[:1] != (RECORD_CHANGED,):
+            raise
+        await session.rollback()
+        raise InvalidTransition(f"Work order is no longer {current.value}; reload and retry") from None
     assert isinstance(result, CursorResult)  # an UPDATE always returns one
     if result.rowcount != 1:
         await session.rollback()
