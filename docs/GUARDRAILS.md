@@ -134,15 +134,52 @@ function call used as a type annotation, a mistyped lookup table, a
 | `python -m tools.check_red` | SQLite, pull requests | every new test RED on the base code |
 | `python -m tools.mutation_check` | SQLite | control passes, canary survives, every mutant killed |
 
-### 4. Catch what checks cannot: review
+### 4. Catch what checks cannot: review and new angles
 
-Checks only answer questions somebody already asked. New defects came from
-changing who is looking. A **Linus-style review** (taste, data structures,
-needless special cases) and an **adversarial review** (try to break each
-README claim, and prove it on a copy) found the status-change race, the CSRF
-hole, and four smaller defects that every check had passed. Each is now a
-test and, where it fits, a mutant, so the next regression is caught
-mechanically.
+Checks only answer questions somebody already asked. They **hold ground**;
+they do not **gain** it. Every check above stops a defect class that was
+already known. New classes are found by changing where the observer stands,
+by looking from a new **angle**, not by running the same checks harder.
+
+**Angles that work:**
+
+- run it for real, end to end, on the real target (here, the production
+  database engine);
+- give the same evidence to a fresh reviewer told to break it, not to
+  approve it;
+- hand the output to the person who will use it;
+- compare against an older artefact of the same kind;
+- ask what an input is *for*, not only what shape it has;
+- build the plausible worse version and see what notices;
+- enumerate what the code *can* do, not just what it is meant to do;
+- distrust a result nobody predicted, a kill or a pass, and ask what
+  caused it;
+- re-derive a number from a second source before believing the first.
+
+**A fake angle asks the same question with more effort.** Running the suite
+again, or asking the same reviewer to look harder, is not a new angle.
+
+**When to stop:** move in *different* directions; stop after several
+consecutive directions turn up nothing; write down every empty direction, so
+nobody re-walks it.
+
+**The angles that found defects in this repo** (each is in
+[CHECKS.md](CHECKS.md)):
+
+| Angle | What it found |
+| --- | --- |
+| An adversarial reviewer told to break each README claim, proving attacks on a copy | the status-change race, the CSRF hole, unbounded ids, blank names, `alembic check` ignoring server defaults |
+| A Linus-style taste review | the duplicated error mapping, check-then-insert in `create_site` |
+| Running on the production engine (MariaDB 11) instead of only SQLite | the race surfacing as error 1020; a false default-comparison difference introduced by a fix |
+| A kill nobody predicted, and asking which test caused it | the mutation check killing every mutant with its own self-test |
+| CI disagreeing with a local run, then reproducing it the way CI installs | `check_red` measuring the working copy instead of the base |
+| A number disagreeing with a second source | the ruff measurement collapsing duplicate findings |
+| Asking whether a first green proved anything | the RED gate failing a test that could only test test code |
+
+**Turning an angle into a check.** An angle finds a defect once. The fix
+includes making that class mechanical: a test, a mutant, a rule or a hook.
+Then the next occurrence is caught without anyone standing in that spot
+again. That is how every row of the table at the end of this page got there.
 
 ## What none of this does
 
