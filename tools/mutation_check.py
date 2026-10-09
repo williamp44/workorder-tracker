@@ -153,7 +153,7 @@ def run_suite(tree: Path) -> int:
         # test that every mutant still applies fails by construction, which
         # once made every mutant look killed whatever the app tests did.
         [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider",
-         "--ignore=tests/test_mutation_check.py"],
+         "--ignore=tests/unit/test_mutation_check.py"],
         cwd=tree,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
