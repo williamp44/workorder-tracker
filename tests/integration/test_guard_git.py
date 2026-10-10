@@ -169,3 +169,34 @@ def test_us006_allows_on_a_clean_tree(clean, command):
 @pytest.mark.control("pins that a checkout of a clean file stays allowed; base allows it")
 def test_us006_allows_restoring_a_clean_file(dirty):
     assert not denied(dirty, "git checkout -- f.txt")
+
+
+# --- US-014: a commit gated on a filter's exit status ------------------------
+# A pipeline's status is its last stage's: `pytest | tail -2 && git commit`
+# commits after a failing suite, because tail exited 0.
+
+GATED_ON_A_FILTER = (
+    "pytest -q 2>&1 | tail -2 && git commit -m x",
+    'pytest -q | grep -E "passed|failed" && git add a.py && git commit -m x',
+    "ruff check . | head -5 && git push",
+    "python -m tools.check_red --base main | tail -1 && git commit -m x",
+)
+
+
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+@pytest.mark.parametrize("command", GATED_ON_A_FILTER)
+def test_us014_refuses_a_commit_gated_on_a_filter(repo, command, tool):
+    assert denied(repo, command, tool)
+
+
+@pytest.mark.control("pins the US-014 allow rows: pipefail, no filter, no commit, separate statements, quoted, heredoc")
+@pytest.mark.parametrize("command", [
+    "set -o pipefail; pytest -q | tail -2 && git commit -m x",
+    "pytest -q && git commit -m x",
+    "git log | head -5 && git status",
+    "pytest -q | tail -2; git status",
+    'git commit -m "a | tail && git commit"',
+    "cat >> notes.txt <<'EOF'\nx | tail && git commit\nEOF",
+])
+def test_us014_allows(repo, command):
+    assert not denied(repo, command)

@@ -240,10 +240,44 @@ CHECKS = MappingProxyType({
 })
 
 
+FILTERS = ("tail", "head", "grep", "sort", "select-string", "select-object", "findstr")
+
+
+def is_commit_or_push(segment: str, cwd: str) -> bool:
+    found = git_argv(unwrap(words(segment)), cwd)
+    return found is not None and len(found[0]) > 1 and found[0][1] in ("commit", "push")
+
+
+def check_gated_commits(line: str, cwd: str) -> None:
+    """Refuse `<check> | <filter> && git commit` (US-014).
+
+    A pipeline's exit status is its LAST stage's, so `&&` sees the filter's
+    0, and a failing check still commits. A warning about this was read past
+    every time; a refusal cannot be. `set -o pipefail` earlier in the line
+    makes the pipeline fail with its producer, and is allowed."""
+    pipefail = False
+    for statement in guard_shared.split_unquoted(guard_shared.without_heredocs(line), (";", "\n")):
+        w = words(statement)
+        if w[:1] == ["set"] and "pipefail" in w:
+            pipefail = True
+        gate = None
+        for segment in guard_shared.split_unquoted(statement, ("&&", "||")):
+            if gate and is_commit_or_push(segment, cwd):
+                raise Denied(f"this commit is gated on {gate[1]}'s exit status, not on "
+                             f"{gate[0]}'s. A failing run would still commit. Add "
+                             f"'set -o pipefail;' or run the check and the commit as "
+                             f"separate commands.")
+            stages = guard_shared.split_unquoted(segment, ("|",))
+            last = unwrap(words(stages[-1])) if len(stages) > 1 else []
+            if last and program(last[0]) in FILTERS and not pipefail:
+                gate = (words(stages[0])[0] if words(stages[0]) else stages[0], last[0])
+
+
 def judge(line: str, cwd: str, depth: int = 0) -> None:
     """Raise Denied if any command in `line`, wherever git hides in it, destroys work."""
     if depth > MAX_DEPTH:
         return
+    check_gated_commits(line, cwd)
     for body in subshells(guard_shared.without_heredocs(line)):
         judge(body, cwd, depth + 1)
     for cmd in guard_shared.commands(line):

@@ -299,6 +299,12 @@ MUTANTS = (
         "    written = []\n",
     ),
     Mutant(
+        "commit-gated-on-filter-allowed",
+        ".claude/hooks/guard_git.py",
+        "if gate and is_commit_or_push(segment, cwd):",
+        "if False:",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'or any("A" in a[1:] or "u" in a[1:] for a in short)):',

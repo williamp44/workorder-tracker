@@ -54,7 +54,13 @@ def without_heredocs(line: str) -> str:
     return "\n".join(out)
 
 
-def _split_unquoted(text: str) -> list[str]:
+def split_unquoted(text: str, separators: tuple[str, ...]) -> list[str]:
+    """`text` cut at each of `separators` outside quotes, stripped, empties dropped.
+    List longer separators first: `||` before `|`."""
+    return [c.strip() for c in _split_unquoted(text, separators) if c.strip()]
+
+
+def _split_unquoted(text: str, separators: tuple[str, ...] = SEPARATORS) -> list[str]:
     """Cut at every separator that is not inside quotes.
 
     Splitting the raw string made `grep -E "a|b"` look like two commands, and
@@ -74,7 +80,7 @@ def _split_unquoted(text: str) -> list[str]:
             buf.append(ch)
             i += 1
             continue
-        for sep in SEPARATORS:
+        for sep in separators:
             if text.startswith(sep, i):
                 out.append("".join(buf))
                 buf = []
