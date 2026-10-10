@@ -31,11 +31,15 @@ def load(name: str):
 
 
 def run_hook(name: str, payload: dict | str) -> dict | None:
-    """Run a hook as Claude Code does: JSON on stdin, decision on stdout."""
+    """Run a hook as Claude Code does: JSON on stdin, decision on stdout.
+
+    GATE_EDIT is dropped: a session launched with it to change the gates
+    would otherwise open them here too, and the deny tests would fail."""
     stdin = payload if isinstance(payload, str) else json.dumps(payload)
+    env = {k: v for k, v in os.environ.items() if k != "GATE_EDIT"}
     r = subprocess.run(
         [sys.executable, str(HOOKS / f"{name}.py")],
-        input=stdin, capture_output=True, text=True, cwd=ROOT,
+        input=stdin, capture_output=True, text=True, cwd=ROOT, env=env,
     )
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout) if r.stdout.strip() else None
