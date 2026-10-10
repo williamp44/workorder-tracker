@@ -39,19 +39,20 @@ def findings(path: Path, root: Path, python: str = sys.executable) -> list[str]:
     have ruff, pyrefly and the project's deps installed."""
     if path.suffix != ".py" or not path.exists():
         return []
+    if root not in path.resolve().parents:
+        return []  # not this project's file: its config does not apply (US-012)
     out = []
     lint = _run(python, ["ruff", "check", "--output-format", "concise", "--quiet", str(path)], root)
     if lint.returncode not in (0, 1):
         out.append(f"ruff could not run (exit {lint.returncode}): {lint.stderr.strip()[:200]}")
     out += [ln for ln in lint.stdout.splitlines() if ln.strip()]
-    if root in path.resolve().parents:
-        # A hook imports its siblings by directory, as Claude Code runs it;
-        # check_types adds the same search path for the hooks.
-        hooks = root / ".claude" / "hooks"
-        siblings = ["--search-path", str(hooks)] if path.resolve().parent == hooks.resolve() else []
-        types = _run(python, ["pyrefly", "check", "--preset", "default", *siblings,
-                              "--python-interpreter-path", python, str(path)], root)
-        out += [ln for ln in types.stdout.splitlines() if ln.startswith("ERROR")]
+    # A hook imports its siblings by directory, as Claude Code runs it;
+    # check_types adds the same search path for the hooks.
+    hooks = root / ".claude" / "hooks"
+    siblings = ["--search-path", str(hooks)] if path.resolve().parent == hooks.resolve() else []
+    types = _run(python, ["pyrefly", "check", "--preset", "default", *siblings,
+                          "--python-interpreter-path", python, str(path)], root)
+    out += [ln for ln in types.stdout.splitlines() if ln.startswith("ERROR")]
     return out
 
 

@@ -287,6 +287,12 @@ MUTANTS = (
         "if False:",
     ),
     Mutant(
+        "post-edit-judges-outside-files",
+        ".claude/hooks/post_edit_check.py",
+        "        return []  # not this project's file: its config does not apply (US-012)\n",
+        "        pass\n",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'or any("A" in a[1:] or "u" in a[1:] for a in short)):',

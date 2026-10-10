@@ -267,17 +267,34 @@ def test_splitter_respects_quotes_and_heredocs():
 
 # --- post_edit_check: findings reach the agent the moment it edits ---------
 
+def project_with_ruff_config(tmp_path: Path) -> Path:
+    """tmp_path as a project with this repo's ruff config, so a file in it is
+    inside the project the check is told about (US-012)."""
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    return tmp_path
+
+
 def test_post_edit_check_reports_a_ruff_finding_in_the_edited_file(tmp_path):
-    bad = tmp_path / "bad.py"
+    project = project_with_ruff_config(tmp_path)
+    bad = project / "bad.py"
     bad.write_text("def f(unused):\n    return 1\n")
-    problems = load("post_edit_check").findings(bad, ROOT)
+    problems = load("post_edit_check").findings(bad, project)
     assert any("ARG001" in p for p in problems)
 
 
 def test_post_edit_check_is_silent_on_a_clean_file(tmp_path):
-    good = tmp_path / "good.py"
+    project = project_with_ruff_config(tmp_path)
+    good = project / "good.py"
     good.write_text("def f(x: int) -> int:\n    return x\n")
-    assert load("post_edit_check").findings(good, ROOT) == []
+    assert load("post_edit_check").findings(good, project) == []
+
+
+def test_post_edit_check_does_not_judge_a_file_outside_the_project(tmp_path):
+    # Found in the transcript audit: a scratchpad script was linted against
+    # this repo's config, with style noise on a file nobody asked about.
+    outside = tmp_path / "scratch.py"
+    outside.write_text("def f(unused):\n    return 1\n")
+    assert load("post_edit_check").findings(outside, ROOT) == []
 
 
 def test_post_edit_check_finds_the_venv_python_for_each_os():
