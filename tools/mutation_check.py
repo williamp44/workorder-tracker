@@ -305,6 +305,13 @@ MUTANTS = (
         "if False:",
     ),
     Mutant(
+        "contract-alarms-on-added-keys",
+        ".claude/hooks/diagnostic_scan.py",
+        "    if gone:\n        notes.append(f\"the hook payload SHAPE MOVED",
+        "    if gone or set(live[\"top_level_keys\"]) - set(pin.get(\"top_level_keys\") or []):\n"
+        "        notes.append(f\"the hook payload SHAPE MOVED",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'or any("A" in a[1:] or "u" in a[1:] for a in short)):',

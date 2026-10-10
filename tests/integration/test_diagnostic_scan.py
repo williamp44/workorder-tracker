@@ -180,18 +180,50 @@ def test_a_payload_with_neither_key_is_loud_not_a_quiet_clean_run():
     assert r.returncode == 0 and "scanning NOTHING" in r.stderr
 
 
-@pytest.mark.parametrize("change,expected", [
-    ("drop tool_use_id", "tool_use_id"),
-    ("add some_new_field", "some_new_field"),
-])
-def test_top_level_drift_is_reported(change, expected):
+def test_a_lost_top_level_key_is_reported():
     data = payload(stdout="all good\n")
-    if change.startswith("drop"):
-        data.pop("tool_use_id")
-    else:
-        data["some_new_field"] = ""
+    data.pop("tool_use_id")
     ctx = context(run(data))
-    assert "SHAPE MOVED" in ctx and expected in ctx
+    assert "SHAPE MOVED" in ctx and "tool_use_id" in ctx
+
+
+# US-007 (F7): every alarm seen live was an ADDED key, and every one was
+# benign: 6 false alarms in one session. Only a loss can make the guard read
+# the wrong thing, so only a loss is reported.
+
+def test_an_added_top_level_key_is_not_an_alarm():
+    data = payload(stdout="all good\n")
+    data["some_new_field"] = ""
+    assert "CONTRACT" not in context(run(data))
+
+
+@pytest.mark.parametrize("extra", [
+    ("persistedOutputPath", "persistedOutputSize"),   # a large output
+    ("backgroundTaskId",),                            # a background command
+    ("backgroundTaskId", "backgroundCwdHint"),
+    ("bashEditDiff",),                                # a command that edited a file
+    ("returnCodeInterpretation",),                    # non-zero exit reported as success
+    ("backgroundTaskId", "timedOutAfterMs"),          # seen live in this PRD's run
+])
+def test_keys_the_harness_adds_to_tool_response_are_not_an_alarm(extra):
+    data = payload(stdout="all good\n")
+    data["tool_response"].update({k: "" for k in extra})
+    assert "CONTRACT" not in context(run(data))
+
+
+def test_a_powershell_result_without_no_output_expected_is_not_an_alarm():
+    # Found live in US-001: PowerShell's tool_response never has it.
+    data = payload(stdout="all good\n")
+    data["tool_name"] = "PowerShell"
+    del data["tool_response"]["noOutputExpected"]
+    assert "CONTRACT" not in context(run(data))
+
+
+@pytest.mark.control("pins that losing a key the guard reads still alarms; base alarms too")
+def test_losing_stdout_is_still_an_alarm():
+    data = payload(stdout="all good\n")
+    del data["tool_response"]["stdout"]
+    assert "tool_response keys moved" in context(run(data))
 
 
 def test_tool_response_changing_its_own_keys_is_reported():

@@ -111,6 +111,9 @@ CONTRACT = HERE / "payload_contract.json"
 # A failed command fires PostToolUseFailure, whose payload has its own shape.
 CONTRACT_FAILURE = HERE / "payload_contract_failure.json"
 FAILURE_EVENT = "PostToolUseFailure"
+# Pinned from a Bash payload, but absent from every PowerShell one (found
+# live in US-001). The guard never reads it.
+OPTIONAL_RESPONSE_KEYS = frozenset({"noOutputExpected"})
 
 # Sentinel: the payload had neither `tool_response` nor `tool_output`, so the
 # contract moved. Distinct from "" so it cannot read as a clean run.
@@ -170,16 +173,17 @@ def check_contract(data: dict) -> list[str]:
         return [f"payload contract {contract.name} is unreadable ({exc})"]
     live = _shape(data)
     notes = []
+    # Only a LOSS is reported (US-007). Every alarm seen live was an added key
+    # (persistedOutputPath, backgroundTaskId, bashEditDiff, ...), all benign,
+    # and a guard that cries wolf is read past.
     gone = [k for k in pin.get("top_level_keys") or [] if k not in live["top_level_keys"]]
-    added = [k for k in live["top_level_keys"] if k not in (pin.get("top_level_keys") or [])]
-    if gone or added:
-        notes.append("the hook payload SHAPE MOVED since it was pinned"
-                     + (f"; keys gone: {', '.join(gone)}" if gone else "")
-                     + (f"; keys new: {', '.join(added)}" if added else "")
-                     + ". Re-read extract_output() before trusting a quiet run.")
+    if gone:
+        notes.append(f"the hook payload SHAPE MOVED since it was pinned; keys gone: "
+                     f"{', '.join(gone)}. Re-read extract_output() before trusting a quiet run.")
     pinned_tr, live_tr = pin.get("tool_response_keys"), live["tool_response_keys"]
-    if pinned_tr is not None and live_tr is not None and pinned_tr != live_tr:
-        notes.append(f"tool_response keys moved: pinned {pinned_tr}, live {live_tr}")
+    lost_tr = [k for k in pinned_tr or [] if k not in (live_tr or []) and k not in OPTIONAL_RESPONSE_KEYS]
+    if pinned_tr is not None and live_tr is not None and lost_tr:
+        notes.append(f"tool_response keys moved: lost {lost_tr}; pinned {pinned_tr}, live {live_tr}")
     elif pinned_tr is not None and live_tr is None:
         notes.append(f"tool_response is no longer a dict of {pinned_tr}")
     return notes
