@@ -114,9 +114,9 @@ GATE_EDIT=1 ./ralph.sh harness_hardening 20 2 sonnet     # from the repo root, o
 ## Task Summary
 
 - **Total:** 15 build tasks + 3 review gates = 18 (US-011 to US-015 added 2026-10-09 from the transcript audit; they sit before US-REVIEW-S2)
-- **Progress:** 8/18 complete (44%)
+- **Progress:** 12/18 complete (67%); US-015 partial
 - **Status:** In progress
-- **Next Task:** US-012
+- **Next Task:** US-007
 
 ## Task Dependencies
 
@@ -233,17 +233,17 @@ graph TD
 ---
 
 ## Sprint 2: Make the guards judge the right things (~60 min)
-**Status:** NOT STARTED
+**Status:** COMPLETE except US-015 Steps 1-2 (review: 4 issues, R2-1..R2-4, see progress file)
 
 - [x] **US-004** guard_gates: missing gates, case variants (~15 min, ~50 lines) [depends: US-REVIEW-S1]
 - [x] **US-005** guard_git: find git inside wrappers, global options, PowerShell syntax (~25 min, ~120 lines) [depends: US-REVIEW-S1]
 - [x] **US-006** guard_git: every discard form, cwd drift, aliases, `--staged` false positive (~25 min, ~120 lines) [depends: US-005]
 - [x] **US-011** A crashing PreToolUse hook refuses, not allows (~20 min, ~60 lines) [depends: US-006]
-- [ ] **US-012** post_edit_check judges only files inside the project (~10 min, ~30 lines) [depends: US-011]
-- [ ] **US-013** Python files written through a shell are checked too (~25 min, ~90 lines) [depends: US-012]
-- [ ] **US-014** Refuse a commit gated on a filter's exit status (~20 min, ~80 lines) [depends: US-006]
-- [ ] **US-015** Probe updatedInput, then decide how truncated output is handled (~30 min) [depends: US-014]
-- [ ] **US-REVIEW-S2** Sprint 2 Review 🚧 GATE (~5 min) [depends: US-004, US-006, US-011, US-012, US-013, US-014, US-015]
+- [x] **US-012** post_edit_check judges only files inside the project (~10 min, ~30 lines) [depends: US-011]
+- [x] **US-013** Python files written through a shell are checked too (~25 min, ~90 lines) [depends: US-012]
+- [x] **US-014** Refuse a commit gated on a filter's exit status (~20 min, ~80 lines) [depends: US-006]
+- [ ] **US-015** (Step 3 done; Steps 1-2 BLOCKED on a person, see progress) Probe updatedInput, then decide how truncated output is handled (~30 min) [depends: US-014]
+- [x] **US-REVIEW-S2** Sprint 2 Review 🚧 GATE (~5 min) [depends: US-004, US-006, US-011, US-012, US-013, US-014, US-015]
 
 ### US-004: guard_gates scope (~15 min, ~50 lines)
 

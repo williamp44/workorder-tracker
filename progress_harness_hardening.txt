@@ -359,3 +359,111 @@ Full gate run (worktree):
     mutation: OK 42 of 42 killed (git-hook-crash-fails-open, gate-hook-crash-blocks-override exit 1)
     check_red: run AFTER this commit, recorded with US-012.
 STATUS: US-011 [x] VERIFIED (check_red pending, next entry)
+
+## Gate runs now happen on a clean git worktree of the task's commit
+The mutation check takes 13+ min and copies the worktree, so each task's
+code is committed, and the full gates (ruff, check_types, check_fp,
+pytest, check_red --base main, mutation_check) run on a detached
+worktree of that commit, with GATE_EDIT unset. The [x] follows only after
+that run passes. Script: scratchpad/gates_at.sh. check_red then judges
+exactly the task's commit.
+
+## US-012 post_edit_check judges only files inside the project (69f2c04)
+RED: FAILED test_post_edit_check_does_not_judge_a_file_outside_the_project
+     Left contains one more item: '...\scratch.py:1:7: ARG001 Unused function argument: `unused`'
+Existing tests changed (stated in the commit): the ruff-finding and clean-file
+tests now name tmp_path as the project, with ruff.toml copied in (ruff
+finds its config by walking up from the file).
+Gates @69f2c04: ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 330 passed | check_red: 115 new, 26 controls, OK all 89 new RED
+    mutation: OK 43 of 43 killed (post-edit-judges-outside-files exit 1)
+check_red for US-011 (@e7cf550, run after its commit): 113 new, 26 controls, OK all 87 new RED.
+STATUS: US-012 [x] VERIFIED
+
+## US-013 Python files written through a shell are checked too (aece4e5)
+RED:
+    FAILED test_recently_written_finds_only_the_python_files_changed_since
+      AttributeError: module 'diagnostic_scan' has no attribute 'recently_written'
+    FAILED test_python_written_through_a_shell_is_checked
+      AssertionError: assert ('Python files written through a shell' in '')
+    2 failed, 1 passed (the no-fresh-file precision case, @control)
+Deviation (stated in the commit): the PRD says skip silently without the
+venv. CI and mutation copies have no .venv, so the test could never pass
+there. The interpreter is the venv; else the hook's own python when it
+has ruff and pyrefly; else skip.
+Cost: recently_written over this repo = 6 ms (limit 200 ms). At most 5 files are checked.
+Live:
+    `printf 'import os\n' > scratch_shell_probe.py` ->
+      PostToolUse:Bash hook additional context: Python files written through a shell (post_edit_check did not see these):
+        scratch_shell_probe.py:1:8: F401 [*] `os` imported but unused
+    (file deleted after)
+    `pytest -q -p no:cacheprovider` -> 334 passed, no such context.
+Gates @aece4e5: ruff OK | check_types 0 | check_fp 0 | pytest 334 passed
+    check_red: 119 new, 27 controls, OK all 92 new RED
+    mutation: OK 44 of 44 killed (shell-written-python-unchecked exit 1)
+STATUS: US-013 [x] VERIFIED
+
+## US-014 Refuse a commit gated on a filter's exit status (a54be71)
+RED: 8 failed (4 commands x Bash/PowerShell), 6 passed (the allow rows, @control)
+Live: `true | tail -1 && git commit --dry-run -m probe` ->
+    PreToolUse:Bash hook error: this commit is gated on tail's exit status, not on true's.
+    A failing run would still commit. Add 'set -o pipefail;' or run the check and the commit
+    as separate commands.
+FOUND while building it: a stale .pyc. Replacing `SEPARATORS` with
+`separators` (same length), within a second of the previous edit, left
+the source mtime and size equal to the cached .pyc, so Python ran the OLD
+splitter until __pycache__ was deleted. The live hooks share that cache,
+so a hook edited this way can keep running its old code. Not fixed
+(proposal below).
+Gates @a54be71: ruff OK | check_types 0 | check_fp 0 | pytest 349 passed
+    check_red: 134 new, 33 controls, OK all 101 new RED
+    mutation: OK 45 of 45 killed (commit-gated-on-filter-allowed exit 1)
+STATUS: US-014 [x] VERIFIED
+
+## US-015 Probe updatedInput, then decide -- PARTIAL, BLOCKED ON A PERSON
+Step 1 (SPIKE) NOT RUN. The probe needs a throwaway PreToolUse hook that
+rewrites a command, registered in .claude/settings.json. The auto-mode
+classifier refused that Edit ("[Self-Modification]"). I did not route
+around it (no --settings file, no claude -p workaround). The probe script
+was deleted unused.
+To unblock: a person registers the probe hook (or runs the spike), or
+grants this edit. Questions 2 and 3 (does a permission prompt appear; what
+the transcript shows) need an interactive default-mode session anyway.
+Step 2: not built (the decision rule needs Step 1's evidence).
+Step 3: DONE (dd3f803). The PRD removes the warning either way.
+    RED: the two merged-then-truncated commands moved to QUIET_COMMANDS: 2 failed on the base.
+    The CHECKS.md note is written in US-010.
+Gates @dd3f803: see US-REVIEW-S2.
+STATUS: US-015 [ ] Step 3 VERIFIED; Steps 1-2 BLOCKED
+
+## US-REVIEW-S2 Sprint 2 Review (scope US-004..006, US-011..015)
+1. Full gates @dd3f803 (clean worktree, GATE_EDIT unset):
+    ruff All checks passed! | check_types INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics
+    check_fp 0 finding(s) | pytest 349 passed in 24.40s
+    check_red: 136 new test(s), 33 declared control(s); OK all 103 new test(s) were RED on the base code
+    mutation: OK control passed, equivalent canary survived, 45 of 45 mutants killed
+2. Probe matrices (re-run from the evidence file, GATE_EDIT unset):
+    probe_git:   mismatches: 1  -> allow 'git clean -fdx'
+    probe_git2:  mismatches: 1 of 20 -> allow "Start-Process git -ArgumentList 'add','-A'"
+    probe_gates: mismatches: 0
+   Both remaining mismatches are the probe's expectation, not the guard:
+   - probe_git's repo has no untracked or ignored files. Under US-006's
+     rule (deny clean -f only when there is something to delete), allow is
+     right. test_us006_refuses_on_a_dirty_tree[git clean -fdx] covers the
+     dirty case.
+   - Start-Process is a stated limit in the guard_git docstring, per the PRD.
+   NOTE: with GATE_EDIT=1 inherited, probe_gates reports 17 mismatches,
+   because the override opens every gate. Run the probes with it unset.
+3. Linus check: guard_git.py is 325 lines (it was 265 after the f3ac13a
+   split; US-011 crash handling and the US-014 gated-commit check added
+   60). It still reads top to bottom: crash handler, git option parsing,
+   status helpers, one check per subcommand, the gated-commit check, judge,
+   main. Over the ~250 guide.
+<review-issues-found/>
+  - R2-1 US-015 Steps 1-2 blocked on a person (auto-mode refused the probe hook edit).
+  - R2-2 guard_git.py is 325 lines. Proposal: move git_out/is_ref/status/expand_alias
+    into a git_shared.py sibling. Not done; it is a new module, so a person decides.
+  - R2-3 Stale-.pyc hazard for live hooks. Proposal: launch hooks with `python3 -B`,
+    or set PYTHONDONTWRITEBYTECODE=1 for hook processes, so no .pyc is written for
+    the hooks to read later. Not done: it changes every hook command (the hook interface).
+  - R2-4 probe_git's `git clean -fdx` expectation is stale (see 2); update the probe in US-010.
