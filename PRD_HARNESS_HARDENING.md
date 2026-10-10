@@ -97,6 +97,9 @@ The route around it, writing the files through Bash, is the exact bypass this PR
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"     # POSIX: .venv/bin/python
 ```
+`python3` must start Python 3.11+ (R1-1). Every hook launches with it, and on a stock Windows
+install `python3` is the Microsoft Store stub, so the guards would fail open. A SessionStart
+check says so loudly when it does not.
 Run the baseline gates. Every one must match the Baseline table before US-001 starts.
 
 ### How to run

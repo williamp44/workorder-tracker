@@ -211,3 +211,26 @@ STATUS: US-003 [x] VERIFIED
 <review-issues-found/>
   - R1-1 (above). Pre-existing, environment-dependent; does not affect this
     machine. Sprint 2 is not blocked by it.
+
+## R1-1 fix (decision 2026-10-09: option a)
+A SessionStart hook, plain shell (not a python3 script), runs
+`python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'`. If that
+fails, it prints systemMessage (shown to the person) plus additionalContext
+(shown to the agent), saying the hooks are NOT running. P-2 in the PRD
+now states that python3 must start Python 3.11+.
+RED:
+    FAILED test_settings.py::test_the_python3_check_does_not_itself_need_python3
+    FAILED test_settings.py::test_a_missing_python3_is_announced_at_session_start
+    FAILED test_settings.py::test_a_working_python3_is_silent_at_session_start
+      ValueError: not enough values to unpack (expected 1, got 0)   (no SessionStart entry)
+    3 failed, 4 passed
+Probe with a Store-like stub on PATH (prints "Python was not found", exits 9009):
+    {"systemMessage": "Hooks are NOT running: python3 does not start Python 3.11+ here. ..."}  exit=0
+  The real python3 printed nothing; exit=0.
+Live SessionStart firing: NOT run. It fires only when a session starts;
+re-check it in the US-REVIEW-S3 fresh session.
+Full gate run:
+    ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 247 passed | check_red: 28 new, 8 controls, OK all 20 new RED
+    mutation: OK 29 of 29 mutants killed (python3-check-silent exit 1)
+STATUS: R1-1 VERIFIED (live session start pending)

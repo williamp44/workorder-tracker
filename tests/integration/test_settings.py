@@ -7,6 +7,9 @@ every shell hook, because the matchers named Bash only.
 """
 
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -41,6 +44,45 @@ def test_failed_shell_commands_are_scanned_too():
     assert any("diagnostic_scan.py" in hook["command"]
                for entry in hooks.get("PostToolUseFailure", [])
                for hook in entry["hooks"])
+
+
+def session_start_commands() -> list[str]:
+    hooks = json.loads(SETTINGS.read_text())["hooks"]
+    return [hook["command"] for entry in hooks.get("SessionStart", []) for hook in entry["hooks"]]
+
+
+def run_session_start(path_dir: Path) -> subprocess.CompletedProcess[str]:
+    """The SessionStart check, run by bash with only `path_dir` on PATH."""
+    bash = shutil.which("bash")
+    assert bash, "bash is needed to run hook commands"
+    (command,) = session_start_commands()
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PATH"}
+    env["PATH"] = str(path_dir)
+    return subprocess.run([bash, "-c", command], capture_output=True, text=True, env=env)
+
+
+def test_the_python3_check_does_not_itself_need_python3():
+    # R1-1: every hook launches with python3. A check that is a python3
+    # script could not report that python3 is missing; it is plain shell.
+    (command,) = session_start_commands()
+    assert ".py" not in command and "||" in command
+
+
+def test_a_missing_python3_is_announced_at_session_start(tmp_path):
+    r = run_session_start(tmp_path)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    assert "python3" in out["systemMessage"] and "NOT running" in out["systemMessage"]
+    assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert "python3" in out["hookSpecificOutput"]["additionalContext"]
+
+
+def test_a_working_python3_is_silent_at_session_start(tmp_path):
+    shim = tmp_path / "python3"
+    shim.write_text("#!/bin/sh\nexit 0\n")
+    shim.chmod(0o755)
+    r = run_session_start(tmp_path)
+    assert r.returncode == 0 and r.stdout.strip() == ""
 
 
 def test_gate_hook_covers_notebook_edits():

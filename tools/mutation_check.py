@@ -203,6 +203,12 @@ MUTANTS = (
         "if False:",
     ),
     Mutant(
+        "python3-check-silent",
+        ".claude/settings.json",
+        ">/dev/null 2>&1 || printf",
+        ">/dev/null 2>&1; true || printf",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'if any(a in ("-A", "--all", "-u", "--update") for a in args):',
