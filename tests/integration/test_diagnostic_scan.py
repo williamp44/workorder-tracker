@@ -79,6 +79,14 @@ MUST_FIRE = MappingProxyType({
     "text decoded wrongly": "'utf-8' codec can't decode byte 0x97 in position 882: invalid start byte\n",
     "a deprecation nobody asked about": "/usr/lib/python3/foo.py:12: DeprecationWarning: ast.Str is deprecated\n",
     "a compiler-style error line": "error: cannot find symbol\n",
+    # F8: pyrefly's ERROR lines were never matched; these are F3's false
+    # missing-import errors, as US-002's RED run printed them.
+    "pyrefly ERROR lines": (
+        "ERROR Cannot find module `sqlalchemy` [missing-import]\n"
+        "  ERROR Could not import `op` from `alembic` [missing-module-attribute]\n"
+        "ERROR Cannot find module `fastapi` [missing-import]\n"
+        " INFO 3 errors\n"
+    ),
 })
 
 
@@ -99,6 +107,11 @@ MUST_BE_QUIET = MappingProxyType({
     "the suite passing": "collecting ... collected 174 items\n============ 174 passed in 2.61s ============\n",
     "ruff clean": "All checks passed!\n",
     "pyrefly clean": " INFO Checking project configured at `./pyrefly.toml`\n INFO 0 errors (4 suppressed)\n",
+    "pyrefly clean, as check_types prints it": " INFO 0 diagnostics (4 suppressed)\n INFO 0 diagnostics\n",
+    "pytest -v, with test names that say error": (
+        "tests/integration/test_hooks.py::test_a_crashing_git_guard_refuses_and_names_the_crash[NameError] PASSED [ 40%]\n"
+        "tests/unit/test_errors.py::test_error_page_renders PASSED [ 41%]\n"
+    ),
     "check_fp clean": "0 finding(s)\n",
     "check_red passing": "  base 7e45b323  head HEAD\n  72 new test(s), 1 declared control(s)\nOK   all 71 new test(s) were RED on the base code\n",
     "the mutation check, whose FAIL lines are its own verdicts": (

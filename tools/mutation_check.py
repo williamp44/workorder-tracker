@@ -312,6 +312,12 @@ MUTANTS = (
         "        notes.append(f\"the hook payload SHAPE MOVED",
     ),
     Mutant(
+        "scan-misses-pyrefly-error",
+        ".claude/hooks/diagnostic_scan.py",
+        '    (r"(?m)^\\s*ERROR\\b", "a tool logged an error"),\n',
+        "",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'or any("A" in a[1:] or "u" in a[1:] for a in short)):',

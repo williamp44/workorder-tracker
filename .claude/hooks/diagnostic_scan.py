@@ -66,6 +66,9 @@ PATTERNS = (
     (r"(?m)^\s*(?:warning|error|fatal error|fatal)\s*:", "compiler-style diagnostic"),
     # Incident here: pyrefly's `WARN Skipping include pattern .claude/hooks`.
     (r"(?m)^\s*(?:WARN|WARNING)\b", "a tool logged a warning"),
+    # F8: pyrefly's `ERROR Cannot find module ...` (40+ lines in one output,
+    # during F3) matched nothing. Its clean verdict is `INFO 0 errors`.
+    (r"(?m)^\s*ERROR\b", "a tool logged an error"),
     (r"(?m)^\s*npm ERR!", "npm error"),
     (r"error\[E\d+\]", "rustc error"),
     (r"(?m)\berror TS\d+\b", "TypeScript error"),
