@@ -1,4 +1,4 @@
-# Harness probes, 2026-10-09 (BEFORE the fixes)
+# Harness probes, 2026-10-09 (BEFORE and AFTER the fixes)
 
 Run on Windows 11, Git Bash, Python 3.14.3, branch `main` at 8209a76. Each script feeds synthetic payloads to a hook (nothing is executed against the repo) and prints the hook's decision next to the expected one. These are the oracles for PRD_HARNESS_HARDENING.md. `want=None` rows are recorded, not judged. Paths in the scripts are absolute to this checkout.
 
@@ -294,3 +294,126 @@ Output:
   tests/integration/test_diagnostic_scan.py          7
   3 of 49 files trip the scanner when merely read
 ```
+
+# AFTER the fixes, 2026-10-09
+
+Each probe above, copied out of this file unchanged and re-run against `.claude/hooks` at `8d8fc99`
+(US-008), with `GATE_EDIT` unset. With `GATE_EDIT=1` inherited, `probe_gates` reports 17 mismatches,
+because the launch override opens every gate: run the probes without it.
+
+## probe_git.py (AFTER)
+
+```
+DENY   'git add -A'                                 
+DENY   'git add .'                                  
+DENY   'git add sub'                                
+allow  'git add f.txt'                              
+DENY   'git checkout -- f.txt'                      
+DENY   'git restore f.txt'                          
+allow  "git commit -m 'mention git add -A here'"    
+allow  'grep -E "a|b" f.txt'                        
+DENY   'git -C . add -A'                            
+DENY   'git.exe add -A'                             
+DENY   'git add :/'                                 
+DENY   'git add -- :/'                              
+DENY   'git add --all'                              
+DENY   'git add -Av'                                
+allow  'git add *.txt'                              
+DENY   'git checkout f.txt'                         
+DENY   'git checkout HEAD f.txt'                    
+DENY   'git checkout . '                            
+DENY   'git reset --hard'                           
+allow  'git clean -fdx'                               <-- MISMATCH
+DENY   'git stash drop'                             
+allow  'git restore --staged f.txt'                 
+DENY   'bash -c "git add -A"'                       
+DENY   "sh -c 'git checkout -- f.txt'"              
+DENY   '$(git add -A)'                              
+DENY   'cd sub && git add .'                        
+DENY   'env git add -A'                             
+allow  'git commit -am wip'                         
+DENY   'git -c core.x=1 add -A'                     
+mismatches: 1
+```
+
+## probe_git2.py (AFTER)
+
+```
+DENY   'git checkout -f'                               
+DENY   'git switch --discard-changes main'             
+DENY   'git checkout -p -- sub/x.txt'                  
+DENY   'git restore --worktree sub/x.txt'              
+DENY   'git restore -s HEAD sub/x.txt'                 
+DENY   'cd sub && git checkout -- x.txt'               
+DENY   'cd sub && git restore x.txt'                   
+DENY   'git aa'                                        
+DENY   'git add -A; git status'                        
+DENY   '& git add -A'                                  
+DENY   'git add -A 2>$null'                            
+DENY   'cmd /c git add -A'                             
+allow  "Start-Process git -ArgumentList 'add','-A'"      <-- MISMATCH
+DENY   'git add `\n -A'                                
+DENY   "git checkout -- 'sub/x.txt'"                   
+allow  'git status'                                    
+allow  'git checkout main'                             
+allow  'git add sub/x.txt'                             
+allow  'git log -- .'                                  
+allow  'git diff -- sub'                               
+mismatches: 1 of 20
+```
+
+## probe_gates.py (AFTER)
+
+```
+DENY  Edit         .claude\hooks\guard_git.py                   
+DENY  Write        .claude\settings.json                        
+DENY  Edit         .github\workflows\ci.yml                     
+DENY  Edit         ruff.toml                                    
+DENY  Edit         tools\mutation_check.py                      
+allow Edit         app\services.py                              
+allow Edit         tests\unit\test_rules.py                     
+DENY  Write        .claude\settings.local.json                  
+DENY  Edit         tools\check_red.py                           
+DENY  Edit         tools\check_fp.py                            
+DENY  Edit         tools\check_types.py                         
+DENY  Edit         tools\isolation.py                           
+DENY  Edit         tests\conftest.py                            
+DENY  Edit         pyproject.toml                               
+allow Edit         tests\spec.py                                
+DENY  Edit         .Claude\Hooks\guard_git.py                   
+DENY  Edit         RUFF.TOML                                    
+DENY  Edit         Tools\Mutation_Check.py                      
+DENY  NotebookEdit .claude\hooks\x.py                           
+DENY  Write        C:\Users\wh429\.claude\settings.json         
+mismatches: 0
+```
+
+## probe_scan.py (AFTER)
+
+```
+== green gate output (want 0 hits each)
+  pytest -v        exit=0 lines=  373 hits=0
+  ruff check .     exit=0 lines=    1 hits=0
+  check_fp         exit=0 lines=    1 hits=0
+  check_types      exit=0 lines=    3 hits=0
+  complexity       exit=0 lines=    3 hits=0
+  git status/log   exit=0 lines=   20 hits=0
+== reading files (cat): hits per file
+  .claude/hooks/diagnostic_scan.py                   10
+  docs/CHECKS.md                                     3
+  tests/integration/test_diagnostic_scan.py          7
+  3 of 51 files trip the scanner when merely read
+```
+
+### The two remaining mismatches are in the probes, not the guards
+
+- `probe_git`: `git clean -fdx` is **allowed**, and that is right. The probe's repo has a dirty
+  *tracked* file but no untracked or ignored files, so `clean` has nothing to delete. US-006 refuses
+  `clean -f` only when it would delete something (`git status --porcelain --untracked-files=all`,
+  plus `--ignored` for `-x`). The probe's `True` predates that rule. The refusing case is
+  `test_us006_refuses_on_a_dirty_tree[git clean -fdx]` in `tests/integration/test_guard_git.py`.
+- `probe_git2`: `Start-Process git -ArgumentList 'add','-A'` is **allowed**: a stated limit in the
+  `guard_git` docstring and in GUARDRAILS.md, as the PRD records ("Start-Process was allowed in
+  the probe").
+
+Read with those two, every guard probe case behaves as intended: 0 unexplained mismatches.

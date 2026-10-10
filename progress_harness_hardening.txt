@@ -467,3 +467,51 @@ STATUS: US-015 [ ] Step 3 VERIFIED; Steps 1-2 BLOCKED
     or set PYTHONDONTWRITEBYTECODE=1 for hook processes, so no .pyc is written for
     the hooks to read later. Not done: it changes every hook command (the hook interface).
   - R2-4 probe_git's `git clean -fdx` expectation is stale (see 2); update the probe in US-010.
+
+## US-007 Contract alarms only on loss (b17f17a)
+RED: 8 failed on the base (an added top-level key; 6 live tool_response key
+sets: persistedOutputPath+Size, backgroundTaskId, +backgroundCwdHint,
+bashEditDiff, returnCodeInterpretation, backgroundTaskId+timedOutAfterMs;
+the PowerShell shape without noOutputExpected). Losing stdout still alarms (@control).
+Existing test changed: "add some_new_field" used to expect SHAPE MOVED.
+Amendment: noOutputExpected is OPTIONAL_RESPONSE_KEYS, not pinned per tool.
+Live: `seq 1 300000` (persisted output) and a background `echo` -> no contract note.
+Gates @b17f17a: ruff OK | check_types 0 | check_fp 0 | pytest 358 passed
+    check_red: 147 new, 34 controls, OK all 113 new RED
+    mutation: OK 46 of 46 killed (contract-alarms-on-added-keys exit 1)
+STATUS: US-007 [x] VERIFIED
+
+## US-008 pyrefly ERROR lines (8d8fc99)
+RED: FAILED test_fires_on_a_real_diagnostic[pyrefly ERROR lines]  (1 failed, 51 passed)
+Precision: the new quiet cases (check_types' `INFO 0 diagnostics`, pytest -v names
+containing "error") pass; probe_scan after: 0 hits on all 6 green outputs.
+US-007 and US-008 were written together in the tree; US-008's hunks were taken out
+with Edit, US-007 was committed, then they were re-applied, so each is its own commit.
+Process note: guard_git (US-014) refused my first US-008 commit command,
+`pytest ... | grep ... && git add ... && git commit`, which is exactly its job.
+Gates @8d8fc99: ruff OK | check_types 0 | check_fp 0 | pytest 362 passed
+    check_red: 151 new, 34 controls, OK all 117 new RED
+    mutation: OK 47 of 47 killed (scan-misses-pyrefly-error exit 1)
+STATUS: US-008 [x] VERIFIED
+
+## US-009 [x] SKIPPED (decided 2026-10-09, PRD Decisions #3)
+
+## US-010 Regenerate doc numbers; record the probes
+- CHECKS.md: Measurements (mutation, pytest, check_red) replaced with the
+  pasted 8d8fc99 gate output. Instrument-defect rows 13-20 (F1-F8) and 21-27
+  (found during this run) added, each with its probe or test and output.
+  "35 tests" corrected with `check_red --base 2b68ad6^ --head 2b68ad6`:
+    37 new test(s), 0 declared control(s) / OK all 37 new test(s) were RED.
+  The CI-evidence section keeps the CI run's own 174/17 output, now labelled
+  as that run's record.
+- GUARDRAILS.md: "injects 17 bugs" -> 47, with its command; hook table (matchers
+  incl. PowerShell and NotebookEdit, SessionStart check, crash behaviour);
+  post_edit_check's interpreter rule; limits name PowerShell and what is not parsed;
+  defect-class rows with counts pasted from `pytest --collect-only` and MUTANTS.
+- evidence/harness_probes_2026-10-09.md: AFTER section with all four probes re-run.
+Acceptance grep:
+    $ grep -n "17 bugs\|174 passed\|35 tests" docs/*.md
+    docs/CHECKS.md:105:  ... 174 passed in 2.61s ...   (CI run 37980856090's own log, labelled)
+    docs/CHECKS.md:113:  ... 174 passed in 3.92s ...   (same, MariaDB leg)
+  Nothing stale: both are the dated record of that CI run, not current claims.
+STATUS: US-010 [x] (docs; numbers pasted from commands)

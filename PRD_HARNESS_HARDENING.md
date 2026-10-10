@@ -114,9 +114,9 @@ GATE_EDIT=1 ./ralph.sh harness_hardening 20 2 sonnet     # from the repo root, o
 ## Task Summary
 
 - **Total:** 15 build tasks + 3 review gates = 18 (US-011 to US-015 added 2026-10-09 from the transcript audit; they sit before US-REVIEW-S2)
-- **Progress:** 12/18 complete (67%); US-015 partial
+- **Progress:** 16/18 complete (89%); US-015 partial
 - **Status:** In progress
-- **Next Task:** US-007
+- **Next Task:** US-REVIEW-S3
 
 ## Task Dependencies
 
@@ -483,10 +483,10 @@ Remove the throwaway hook afterwards.
 ## Sprint 3: Noise, recall, and the record (~50 min)
 **Status:** NOT STARTED
 
-- [ ] **US-007** Payload contract alarms only on loss (~10 min, ~40 lines) [depends: US-REVIEW-S2]
-- [ ] **US-008** diagnostic_scan sees pyrefly ERROR lines (~10 min, ~20 lines) [depends: US-REVIEW-S2]
-- [ ] **US-009** (OPTIONAL, needs a person's yes) Report gate files changed through a shell (~20 min, ~80 lines) [depends: US-REVIEW-S2]
-- [ ] **US-010** Regenerate doc numbers; record the probes (~15 min, docs) [depends: US-007, US-008, US-009]
+- [x] **US-007** Payload contract alarms only on loss (~10 min, ~40 lines) [depends: US-REVIEW-S2]
+- [x] **US-008** diagnostic_scan sees pyrefly ERROR lines (~10 min, ~20 lines) [depends: US-REVIEW-S2]
+- [x] SKIPPED (decided 2026-10-09) **US-009** (OPTIONAL, needs a person's yes) Report gate files changed through a shell (~20 min, ~80 lines) [depends: US-REVIEW-S2]
+- [x] **US-010** Regenerate doc numbers; record the probes (~15 min, docs) [depends: US-007, US-008, US-009]
 - [ ] **US-REVIEW-S3** Final Review 🚧 GATE (~5 min) [depends: US-010]
 
 ### US-007: Contract alarms only on loss (~10 min, ~40 lines)

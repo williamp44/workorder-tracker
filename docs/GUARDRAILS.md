@@ -34,7 +34,7 @@ code, and it has to be shown able to fail.
 | --- | --- | --- |
 | **State the oracle before the change.** | A result seen first gets rationalised. A result predicted first gets checked. | `tools/check_red.py` fails a pull request if any new test already passes on the base branch's code. |
 | **The oracle must not be derived from the code under test.** | A test generated from the code shares the code's mistakes. | The transition spec in `tests/spec.py` is written out by hand. The first draft derived it from the table under test, so a wrong table produced matching wrong tests that passed. |
-| **Prove the oracle can fail.** | A check that has only ever been green has proved nothing. It may never reach the code. | `tools/mutation_check.py` injects 17 bugs. Each must turn the suite red. |
+| **Prove the oracle can fail.** | A check that has only ever been green has proved nothing. It may never reach the code. | `tools/mutation_check.py` injects 47 bugs (`python -m tools.mutation_check` → `47 of 47 mutants killed`, at `8d8fc99`; full output in CHECKS.md). Each must turn the suite red. |
 | **Check the checker.** | An instrument is code and has code's defect rate. | A mutant that changes no behaviour must *survive*. When the mutation tool's own self-test was killing every mutant, this canary is what exposes it (CHECKS.md, instrument defect 2). |
 | **Measure a rule before trusting it.** | A plausible rule that is noisy gets switched off within a week, and takes the good rules with it. | Every check had to show two numbers before gating CI: does it fire on the known defects, and is it quiet on the current tree. |
 
@@ -93,10 +93,16 @@ The earlier a defect is caught, the less is built on top of it.
 
 ### 1. Prevent: Claude Code hooks (`.claude/hooks/`, `.claude/settings.json`)
 
-| Hook | When | What it does |
+| Hook | When (matcher) | What it does |
 | --- | --- | --- |
-| `guard_gates.py` | before any Write/Edit | Refuses edits to the gates themselves: the hooks, CI, the ruff and pyrefly configs, and the mutant list. An agent must not be able to loosen the check it is being judged by inside the same turn. |
-| `guard_git.py` | before any Bash command | Refuses `git add -A`/`.`/a directory, and `git checkout --`/`git restore` over uncommitted work. In another project an agent ran both while the rules forbidding them were in its context. |
+| `guard_gates.py` | before Write, Edit, MultiEdit, NotebookEdit | Refuses edits to the gates themselves: the hooks and their registration (`settings.json`, `settings.local.json`), CI, the ruff, pyrefly and pytest configs, `tests/conftest.py`, and the gate tools (`mutation_check`, `check_red`, `check_fp`, `check_types`, `isolation`). Paths match case-insensitively. A person who means to change a gate launches the session with `GATE_EDIT=1`; every edit that lets through is announced. |
+| `guard_git.py` | before Bash and PowerShell | Refuses `git add -A`/`-Av`/`.`/`:/`/a directory, and every form that discards uncommitted work (`checkout` of paths with or without `--`, `restore`, `checkout -f`, `switch -f`, `reset --hard`, `stash drop/clear`, `clean -f` over untracked files). It finds git behind `env`, `&`, `cmd /c`, `bash -c`, `pwsh -Command`, `$( )`, global options, a `cd` earlier in the line and repo aliases. It also refuses a commit chained after `<check> \| tail` (the commit would be gated on `tail`'s exit status). |
+| SessionStart check | when a session starts | Every hook launches with `python3`. If that does not start Python 3.11+ (on stock Windows it is the Store stub), it says so loudly, because a hook that cannot start does not block. |
+
+A guard that crashes **refuses**: a PreToolUse hook that exits 1 lets the
+call through, so a half-edited `guard_shared` once switched every guard off.
+Under `GATE_EDIT=1`, a crashed `guard_gates` lets the edit through and says
+so instead, so the hook can be repaired.
 
 They judge a **path** or a **command**, facts in the payload that need no
 understanding of the work. Hooks that tried to judge the work itself (is a
@@ -107,9 +113,13 @@ about 18 refusals and 0 defects caught. Those were not carried over.
 weakened until it passes is caught by the mutation check: the mutant it used
 to kill survives, and CI goes red.
 
-**Limit:** Bash is not covered by `guard_gates`. A script can still write a
-gate file. The hook moves weakening a gate from quiet to visible; it is not
-a wall.
+**Limits.** The shell (Bash or PowerShell) is not covered by `guard_gates`:
+a script can still write a gate file. The hook moves weakening a gate from
+quiet to visible; it is not a wall. `guard_git` is table-driven, not a shell
+parser. It does not see `eval`, scripts, `Start-Process git -ArgumentList`,
+backtick command substitution, shell aliases (`!cmd`), or aliases defined
+outside the repo. Every other probe case is held by a test in
+`tests/integration/test_guard_git.py`.
 
 ### 2. Catch in the turn: `post_edit_check.py`
 
@@ -117,6 +127,16 @@ After every edit to a Python file, ruff and pyrefly run on that file and any
 findings go straight back to the agent (exit code 2) before it builds
 anything else on top. It uses the same configuration CI gates on, so the
 agent sees in the turn what CI would refuse.
+
+**Its interpreter.** The hook is launched by `python3`, which need not have
+ruff, pyrefly or the deps. It runs the checks with the project venv's
+python, `.venv/Scripts/python.exe` on Windows and `.venv/bin/python`
+elsewhere, and passes that python to pyrefly explicitly. Left to itself,
+pyrefly asks the first python on PATH for site-packages and reports false
+`missing-import` errors. With no venv it exits 2 and says the in-turn layer
+is NOT running. It judges only files inside the project. A `.py` file
+written through the shell instead of Edit is checked by `diagnostic_scan`
+after the command (below).
 
 Evidence: pyrefly caught 4 defects in code written during this work: a
 function call used as a type annotation, a mistyped lookup table, a
@@ -128,18 +148,24 @@ exactly what is wrong and still be ignored, because of *where* it says it.
 Warnings print first, at the top; the summary prints last, at the bottom; the
 reader, an AI agent included, scans the bottom for the verdict. That is how a
 pyrefly `WARN` saying the hooks were never type-checked was missed twice. This
-hook scans every Bash result for unsolicited toolchain diagnostics (and the
-command for `2>&1 | tail`, which discards the top outright) and attaches its
-findings directly after the tool result, in the same turn: after the summary
-line, where attention already lands. It reports and never blocks, and it is
-built for precision, because a guard that fires on a passing run teaches the
-reader to ignore it.
+hook scans every Bash and PowerShell result, from commands that passed
+(PostToolUse) **and** commands that failed (PostToolUseFailure, a separate
+event with its own payload), for unsolicited toolchain diagnostics. It also
+lints any `.py` file the command wrote. It attaches its findings directly
+after the tool result, in the same turn: after the summary line, where
+attention already lands. It reports and never blocks, and it is built for
+precision, because a guard that fires on a passing run teaches the reader to
+ignore it. A warning on `2>&1 | tail` was retired for that reason: measured
+over one run, 7 warned uses changed behaviour 0 times. The part that
+mattered, a commit gated on the filter's exit status, is refused by
+`guard_git`.
 
-Its tests are built from a payload contract **recorded** from a live firing,
+Its tests are built from payload contracts **recorded** from live firings,
 not from the documentation: the documented key (`tool_output`) is not what
 the harness sends, and a guard built from the docs scanned nothing and
-reported clean while its tests passed. Any drift from the recorded shape is
-reported on every firing.
+reported clean while its tests passed. A recorded key that goes **missing**
+is reported on every firing. Keys the harness adds are not reported: every
+alarm of that kind seen live was benign.
 
 ### 3. Catch before merge: CI (`.github/workflows/ci.yml`)
 
@@ -234,6 +260,29 @@ again. That is how every row of the table at the end of this page got there.
 | An agent loosening a gate it is judged by | design (measured in another project) | `guard_gates`; mutant |
 | `git add -A`, or discarding uncommitted work | an agent in another project | `guard_git`; mutant |
 | A stale waiver that suppresses nothing | ruff `RUF100` | ruff gate |
-| A diagnostic printed at the top and not read, because the reader scans the bottom | the user rereading CI's log | `diagnostic_scan.py` (PostToolUse); 35 tests from a recorded payload; 2 mutants |
+| A diagnostic printed at the top and not read, because the reader scans the bottom | the user rereading CI's log | `diagnostic_scan.py` (PostToolUse and PostToolUseFailure); 52 tests from recorded payloads; 6 mutants |
+| A shell route the hooks never see (the PowerShell tool) | a probe: `git add -A` denied in Bash, run in PowerShell | matchers `Bash\|PowerShell`; `test_settings.py`; mutant |
+| A failed command whose diagnostics are never scanned | a probe: an exit-3 command never reached the hook | `diagnostic_scan` on PostToolUseFailure; mutant |
+| A guard that crashes, and so lets the call through | the transcript audit (a half-edited `guard_shared`) | crash handlers that refuse; tests on broken copies; 2 mutants |
+| A commit gated on a filter's exit status (`pytest \| tail && git commit`) | the transcript audit | `guard_git`; mutant |
+| `git` hidden behind a wrapper, an option or a `cd` | the probe tables (26 of 49 cases missed) | `guard_git`; 65 tests in `test_guard_git.py`; 11 `guard_git` mutants |
 | A gate whose scope silently shrinks (pyrefly skipping `.claude/hooks`) | reading CI's output, not its exit code | `tools/check_types.py`; a planted error it must find; 2 mutants |
 | A check that measures the working copy when it means to measure a copy | CI disagreeing with a local run | `tools/isolation.py`; `test_isolation.py` (RED under an editable install, as CI installs) |
+
+The counts above, measured 2026-10-09:
+
+```
+$ pytest --collect-only -q tests/integration/test_diagnostic_scan.py | tail -1
+52 tests collected in 0.03s
+$ pytest --collect-only -q tests/integration/test_guard_git.py | tail -1
+65 tests collected in 0.03s
+$ python -c "from tools.mutation_check import MUTANTS; ..."   # mutants per file
+.claude/hooks/diagnostic_scan.py 6
+.claude/hooks/guard_git.py 11
+.claude/hooks/guard_gates.py 7
+.claude/hooks/post_edit_check.py 3
+.claude/settings.json 2
+```
+
+"26 of 49" is the two `guard_git` probe rounds before the fixes: 17 of 29
+and 9 of 20 mismatched (`docs/evidence/harness_probes_2026-10-09.md`).
