@@ -200,3 +200,38 @@ def test_us014_refuses_a_commit_gated_on_a_filter(repo, command, tool):
 ])
 def test_us014_allows(repo, command):
     assert not denied(repo, command)
+
+
+# --- US-017: abbreviated long options and -f inside a short cluster ----------
+# git accepts any unambiguous prefix of a long option (`--har` is --hard), and
+# -f inside a cluster (`-qf`). Each deny row destroyed dirty work in the
+# fresh reviewer's throwaway repo while the hook said nothing (R3-2).
+
+@pytest.mark.parametrize("command", [
+    "git reset --har",
+    "git reset --ha HEAD",
+    "git clean --forc",
+    "git clean --fo -x",
+    "git checkout --forc main",
+    "git switch --disc main",
+    "git checkout -qf main",
+    "git checkout -fq",
+    "git switch -qf main",
+])
+def test_us017_refuses_abbreviations_and_clusters(dirty, command):
+    assert denied(dirty, command)
+
+
+@pytest.mark.control("pins the US-017 allow rows on a dirty tree: a branch name containing f, no force at all")
+@pytest.mark.parametrize("command", [
+    "git checkout -bfix",
+    "git checkout -q main",
+    "git switch --detach main",
+])
+def test_us017_allows_on_a_dirty_tree(dirty, command):
+    assert not denied(dirty, command)
+
+
+@pytest.mark.control("pins that an abbreviated --hard over a clean tree, which destroys nothing, stays allowed")
+def test_us017_allows_an_abbreviation_on_a_clean_tree(clean):
+    assert not denied(clean, "git reset --har")

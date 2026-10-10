@@ -265,8 +265,20 @@ MUTANTS = (
     Mutant(
         "git-hook-allows-reset-hard",
         ".claude/hooks/guard_git.py",
-        '"reset": "--hard" in args,',
+        '"reset": any(is_long_option(a, "--hard") for a in args),',
         '"reset": False,',
+    ),
+    Mutant(
+        "git-hook-misses-abbreviated-options",
+        ".claude/hooks/guard_git.py",
+        "    return arg == name or (len(arg) >= 4 and name.startswith(arg))\n",
+        "    return arg == name\n",
+    ),
+    Mutant(
+        "git-hook-misses-f-in-cluster",
+        ".claude/hooks/guard_git.py",
+        '                if ch == "f":\n',
+        "                if False:\n",
     ),
     Mutant(
         "git-hook-ignores-cd",

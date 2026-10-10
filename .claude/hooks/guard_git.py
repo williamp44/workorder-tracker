@@ -165,6 +165,29 @@ def check_add(w: list[str], cwd: str) -> None:
             raise Denied(f"`git add {p}` stages a whole directory. Name the files.")
 
 
+def is_long_option(arg: str, name: str) -> bool:
+    """git takes any unambiguous prefix of a long option: `--har` is `--hard`
+    (US-017). Approximated as four characters or more, `--` and two letters;
+    `--d` alone is ambiguous in git too (`--detach`, `--discard-changes`)."""
+    return arg == name or (len(arg) >= 4 and name.startswith(arg))
+
+
+def forced(args: list[str], value_flags: str = "") -> bool:
+    """-f or --force, abbreviated or inside a short cluster (`-qf`). A flag in
+    `value_flags` takes the rest of its cluster as a value: `-bfix` names a
+    branch `fix`, it does not force."""
+    if any(is_long_option(a, "--force") for a in args):
+        return True
+    for a in args:
+        if a.startswith("-") and not a.startswith("--"):
+            for ch in a[1:]:
+                if ch in value_flags:
+                    break
+                if ch == "f":
+                    return True
+    return False
+
+
 def check_checkout(w: list[str], cwd: str) -> None:
     args = w[2:]
     if "--" in args:
@@ -172,7 +195,7 @@ def check_checkout(w: list[str], cwd: str) -> None:
         if paths:
             refuse_if_dirty(w, cwd, paths)
         return
-    if any(a in ("-f", "--force") for a in args):
+    if forced(args, value_flags="bB"):
         refuse_if_dirty(w, cwd)
         return
     if any(a in ("-b", "-B", "--orphan") for a in args):
@@ -207,19 +230,20 @@ def check_restore(w: list[str], cwd: str) -> None:
 def check_force(w: list[str], cwd: str) -> None:
     """switch -f/--discard-changes, reset --hard, stash drop/clear."""
     args = w[2:]
-    forced = {
-        "switch": any(a in ("-f", "--force", "--discard-changes") for a in args),
-        "reset": "--hard" in args,
+    discards = {
+        "switch": (forced(args, value_flags="cC")
+                   or any(is_long_option(a, "--discard-changes") for a in args)),
+        "reset": any(is_long_option(a, "--hard") for a in args),
         "stash": bool(args) and args[0] in ("drop", "clear"),
     }[w[1]]
-    if forced:
+    if discards:
         refuse_if_dirty(w, cwd)
 
 
 def check_clean(w: list[str], cwd: str) -> None:
     args = w[2:]
     flags = short_flags(args)
-    if "--force" not in args and "f" not in flags:
+    if not forced(args, value_flags="e"):  # -e takes a pattern
         return
     ignored = "x" in flags or "X" in flags
     lines = status(cwd, "--untracked-files=all", *(["--ignored"] if ignored else []))
