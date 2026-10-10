@@ -517,3 +517,92 @@ allow  guard_gates  '.claude/hooks/../../app/services.py'
 allow  guard_gates  'app/services.py'                 
 mismatches: 0 of 19
 ```
+
+# Open-items probes, 2026-10-10 (after Sprint 4, at 6985013)
+
+## R3-2: the open bypass rows, re-run through the live guard_git (GATE_EDIT unset)
+
+```
+OPEN  prefix    'time git reset --hard'
+OPEN  prefix    'timeout 20 git reset --hard'
+OPEN  prefix    'nohup git reset --hard'
+OPEN  prefix    'nice git reset --hard'
+OPEN  prefix    'FOO=1 git reset --hard'
+OPEN  prefix    'GIT_DIR=.git git reset --hard'
+OPEN  prefix    'env -u X git reset --hard'
+OPEN  prefix    'xargs git reset --hard'
+OPEN  argv      'echo f.txt | xargs git checkout --'
+OPEN  argv      'find . -name f.txt -exec git checkout -- {} \\;'
+OPEN  group     '( git reset --hard )'
+OPEN  group     '(git reset --hard)'
+OPEN  group     '{ git reset --hard; }'
+OPEN  group     '! git reset --hard'
+OPEN  group     'true & git reset --hard'
+OPEN  group     'if true; then git reset --hard; fi'
+OPEN  group     'for i in 1; do git reset --hard; done'
+OPEN  syntax    'git reset --hard>/dev/null'
+OPEN  syntax    'git\\\n reset --hard'
+OPEN  syntax    "$'git' reset --hard"
+OPEN  syntax    'echo $(echo $(echo $(echo $(echo $(git reset --hard)))))'
+OPEN  gitopt    "git -c alias.x='reset --hard' x"
+OPEN  gitopt    'git --exec-path=/x reset --hard'
+OPEN  plumbing  'git read-tree -u --reset HEAD'
+OPEN  plumbing  'git checkout-index -f -a'
+OPEN  plumbing  'git diff | git apply -R'
+OPEN  plumbing  'git mv -f sub/x.txt f.txt'
+OPEN  plumbing  'git worktree remove --force wt'
+OPEN  pathspec  'git checkout HEAD :/'
+OPEN  pathspec  "git checkout HEAD '*.txt'"
+OPEN  pathspec  'git checkout --pathspec-from-file=p HEAD'
+OPEN  pwsh      'cmd /c "git reset --hard"'
+DENY  pwsh      'Push-Location sub; git checkout -- ../f.txt'
+OPEN  pwsh      '(git reset --hard)'
+OPEN  pwsh      '$null = git reset --hard'
+OPEN  filter    'pytest -q | tee out.txt && git commit -m x'
+OPEN  filter    'pytest -q | wc -l && git commit -m x'
+OPEN  filter    'set +o pipefail; pytest -q | tail -1 && git commit -m x'
+OPEN  filter    'pytest -q | tail -1 && (git commit -m x)'
+
+by category (refused, still open): {'prefix': (0, 8), 'argv': (0, 2), 'group': (0, 7), 'syntax': (0, 4), 'gitopt': (0, 2), 'plumbing': (0, 5), 'pathspec': (0, 3), 'pwsh': (1, 3), 'filter': (0, 4)}
+total still open: 38 of 39
+```
+
+The one DENY (Push-Location) is incidental: `../f.txt` resolves outside the repo, `git status` fails, and the guard fails closed. The Push-Location gap itself remains.
+
+## How often agents in this repo actually typed those forms
+
+Every shell command in all 6 transcripts under ~/.claude/projects/C--dev-workorder-tracker (347 commands). Each hit was classified by reading it:
+
+```
+  2  prefix time/timeout/nohup/nice/xargs before git     -> both probe data (inside heredocs)
+  1  VAR=x git                                          -> a shell assignment line, not a git call
+  2  ( ... git ... ) / { ...; }                         -> probe data
+  2  if/for ... git                                     -> probe data
+  7  git mv -f / read-tree / checkout-index / apply -R / worktree remove
+                                                        -> probe data, except 2 REAL: git worktree remove --force of a
+                                                           throwaway gate worktree (legitimate; gates_at.sh does it too)
+  2  pipe to tee/wc/... then && git commit              -> probe data
+ 10  pipe to tail/head/grep then && git commit         -> REAL (now refused by US-014)
+ 47  any git commit;  12 any destructive git command
+```
+
+## US-015: stderr merged then truncated (`2>&1 | tail/head/grep`, heredocs excluded)
+
+```
+  session 73f5881c (this PRD): 53 of 267 shell commands
+  session a4af81c4:            5 of 76
+  total:                      58 of 349
+```
+
+## R1-1: the SessionStart check against the REAL Windows Store stub
+
+```
+python3.exe -> /c/Program Files/WindowsApps/Microsoft.DesktopAppInstaller_.../AppInstallerPythonRedirector.exe
+PATH=<WindowsApps only>  python3 -c 1:
+Python was not found; run without arguments to install from the Microsoft Store, or disable this shortcut from Settings > Apps > Advanced app settings > App execution aliases.
+stub exit=49
+PATH=<WindowsApps only>  <the SessionStart command>:
+{"systemMessage": "Hooks are NOT running: python3 does not start Python 3.11+ here. Every hook in .claude/settings.json launches with python3, and a PreToolUse hook that fails does not block, so guard
+hook exit=0
+PATH=<normal>            <the SessionStart command>: (no output) exit=0
+```

@@ -116,7 +116,7 @@ GATE_EDIT=1 ./ralph.sh harness_hardening 20 2 sonnet     # from the repo root, o
 - **Total:** 19 build tasks + 4 review gates = 23 (US-011 to US-015 added 2026-10-09 from the transcript audit; Sprint 4, US-016 to US-019 and its review, added 2026-10-10)
 - **Progress:** 22/23 closed: 17 build tasks built, US-009 skipped by decision, 4 reviews passed or recorded; US-015 partial (Step 3 done, Steps 1-2 blocked on a person)
 - **Status:** Done except US-015 Steps 1-2; open issues in "Open review issues" at the end of this file
-- **Next Task:** US-015 Steps 1-2 (needs a person: the probe hook edit was refused by auto mode; or close it as not built, see the assessment)
+- **Next Task:** person-only items: US-020 (live R1-1 check), US-021 (decide US-015), H-1 (review, push, read CI); see Sprint 5
 
 ## Task Dependencies
 
@@ -754,3 +754,54 @@ its parts never contain `(".claude", "hooks")`.
    **Assumption if unanswered: not in this sprint.**
 3. **R2-2 (guard_git size).** US-017 and US-018 add about 50 lines, to about 375.
    **Assumption if unanswered: accept the growth.** Splitting it stays a separate refactor.
+
+---
+
+## Sprint 5: the last open items, probed (2026-10-10, at 6985013)
+
+Each open item was probed before deciding whether it is worth a task. Raw outputs are in
+`docs/evidence/harness_probes_2026-10-09.md`, section "Open-items probes, 2026-10-10".
+
+**The deciding question:** does fixing it prevent a failure that agents actually cause? This uses the strongest
+evidence available: every shell command in all 6 agent transcripts for this repo (347 commands).
+
+### Probe results and verdicts
+
+| Item | Probe | Result (VERIFIED) | Worth fixing? |
+| --- | --- | --- | --- |
+| **R1-1** python3 warning never seen firing | Run the SessionStart command with only the **real** Windows Store stub on PATH (`python3.exe` → `AppInstallerPythonRedirector.exe`) | The stub prints "Python was not found" and exits 49. The command emits the "Hooks are NOT running" warning and exits 0. With a working python3 it is silent, and with none at all it warns. | **Mostly closed.** Verified at the command level against the real stub. The only unobserved step is Claude Code displaying `systemMessage` at session start, which is documented behaviour. **US-020**: one 2-minute live check, run by a person. |
+| **R3-2** ~25 remaining bypasses | Re-run 39 open rows through the live `guard_git`; count how often agents actually typed each form | 38 of 39 are still open. In 347 real commands, **0** honest uses of any open form destroyed work. The only real hits were 2 × `git worktree remove --force` of throwaway worktrees, which were legitimate (the gate script does it too). | **No.** Every remaining form is adversarial-only. Several would cause false denies of legitimate work if refused (`worktree remove --force`), and the rest need a real shell parser. **Close as stated limits.** |
+| **US-015** Steps 1-2 (`updatedInput` rewrite) | Count stderr merged and truncated (`2>&1 \| tail/head/grep`, heredocs excluded) | **58 of 349** commands (53 of 267 in this PRD's session). 10 real commands chained a filter into `git commit`. US-014 now refuses that form. | **Not now.** Truncation is frequent, so the risk is real but its cost is unmeasured: no defect has been traced to a discarded diagnostic, and CI reads full output. The probe needs a hook that rewrites commands, which auto mode refuses. **US-021**: a person decides to close it, or to run the spike. |
+| **R2-2** `guard_git.py` 362 lines | Read the structure | It reads top to bottom: crash handler, git options, status helpers, one check per subcommand, gated-commit check, `judge`, `main`. It is covered by 85 `test_guard_git.py` cases plus the hook tests, and 14 `guard_git` mutants
+(`pytest --collect-only -q tests/integration/test_guard_git.py` → `85 tests collected`; `MUTANTS` by path → 14). | **No.** A split moves code without changing behaviour, and the transplant kit copies `guard_git` with `guard_shared` anyway. **Freeze it**: per R3-2, no more rows. |
+| **CI not run** | `git remote -v`, branch tracking, `gh`, portability grep of the new tests | `origin` exists. `harness-hardening` has no upstream and was never pushed. `gh` is not installed here. Gate files changed vs `main`: 9 files, +910/-117. The new tests branch on `os.name` only through pure functions (`venv_python`, `bare_python_first_on_path`). | **Yes, but by a person.** **H-1**: review, then push. CI's Linux legs are the first run of the 185 new tests off Windows (`check_red --base main` → `185 new test(s)`). |
+
+### Tasks
+
+- [ ] **US-020** (person, ~2 min) Live R1-1 check
+  1. Start `claude` from a Git Bash whose PATH has only the Windows Store stub folder ahead of everything else
+     (`PATH="/c/Users/<you>/AppData/Local/Microsoft/WindowsApps:$PATH" claude`). Do not use `claude -p` with a stub:
+     the person stopped that run.
+  2. Confirm the "Hooks are NOT running" message appears at session start.
+  3. Exit, and record the screenshot or text in the progress file.
+- [ ] **US-021** (person) Decide US-015 Steps 1-2. **Recommended: close as `[x] DECIDED: not built (2026-10-10)`.**
+  - Why close: US-014 refuses the case that cost something, the spike needs a command-rewriting hook, and the
+    benefit is unmeasured.
+  - Revisit only if a defect is traced to a diagnostic that truncation discarded.
+  - The alternative, running the spike, needs a person to register the probe hook (auto mode refuses it).
+- [ ] **H-1** (person) Review the gate files, then push and read CI.
+  1. Review `git diff main..harness-hardening -- .claude tools` (9 files, +910/-117). Every edit was made under
+     `GATE_EDIT=1`.
+  2. Push: `git push -u origin harness-hardening`. Open a PR so `check_red` runs against `origin/main`.
+  3. Watch for:
+     - the SQLite leg's mutation step: 54 mutants, so expect about 15-30 min;
+     - any test that assumed Windows. None found by grep, but this is the first Linux run.
+  4. Record the run's URL and pasted step output in `docs/CHECKS.md` under "CI evidence".
+
+### Not tasks (decided by the probes)
+
+- **R3-2's remaining rows:** closed as stated limits. 0 honest uses in 347 commands. If one is ever seen in a real
+  transcript, add that row then, with the transcript as its RED oracle.
+- **R2-2:** frozen at 362 lines. No split.
+- **Making `diagnostic_scan` warn on truncation again:** retired in US-015 Step 3 (7 warned uses, 0 changes). The
+  58-of-349 frequency does not change that: a warning was read past every time.
