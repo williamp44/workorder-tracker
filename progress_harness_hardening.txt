@@ -170,3 +170,44 @@ Full gate run:
     mutation_check: OK   control passed, equivalent canary survived, 28 of 28 mutants killed
       (scan-ignores-failed-commands exit 1)
 STATUS: US-003 [x] VERIFIED
+
+## US-REVIEW-S1 Sprint 1 Review
+1. Full gate run: the US-003 run above, at 90816d2. No code has changed since
+   (only this file and the PRD checkboxes). Summary: ruff All checks passed;
+   check_types 0 diagnostics; check_fp 0 finding(s); pytest 243 passed;
+   check_red all 16 new RED; mutation 28 of 28 killed.
+2. probe_scan (copied out of docs/evidence/harness_probes_2026-10-09.md, run from the scratchpad):
+    == green gate output (want 0 hits each)
+      pytest -v        exit=0 lines=  254 hits=0
+      ruff check .     exit=0 lines=    1 hits=0
+      check_fp         exit=0 lines=    1 hits=0
+      check_types      exit=0 lines=    3 hits=0
+      complexity       exit=0 lines=    3 hits=0
+      git status/log   exit=0 lines=   20 hits=0
+    == reading files (cat): hits per file
+      .claude/hooks/diagnostic_scan.py                   10
+      docs/CHECKS.md                                     2
+      tests/integration/test_diagnostic_scan.py          7
+      3 of 50 files trip the scanner when merely read
+   Precision unchanged. The failure event uses the same scan(), and the
+   @control test_a_failed_command_with_no_diagnostic_stays_quiet pins it quiet.
+3. Interpreters: all 5 hook entries launch with `python3`.
+    which -a python3 -> /c/Users/wh429/scoop/shims/python3
+                        /c/Users/wh429/AppData/Local/Microsoft/WindowsApps/python3
+    python3 -> C:\Users\wh429\scoop\apps\python\current\python.exe 3.14.3
+   ISSUE R1-1: python3 resolves on THIS machine only because scoop provides
+   it. On a stock Windows install (python.org installer), `python3` is the
+   Microsoft Store alias stub, which prints "Python was not found" and exits
+   non-zero. A non-2 exit from a PreToolUse hook is non-blocking, so
+   guard_git and guard_gates would fail OPEN, and silently. This predates
+   this PRD (every hook used python3 on main); US-002 made post_edit_check
+   use it too. NOT fixed here: the launcher is the hook interface, and
+   changing it is a decision for a person. Options:
+     a) document "python3 must resolve" as P-2 environment, plus a
+        SessionStart check that says so loudly (smallest);
+     b) launch through `py -3` on Windows (not on POSIX; needs a per-OS
+        command, which settings.json cannot express directly);
+     c) accept it as a stated limit in GUARDRAILS.md (US-010).
+<review-issues-found/>
+  - R1-1 (above). Pre-existing, environment-dependent; does not affect this
+    machine. Sprint 2 is not blocked by it.
