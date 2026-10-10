@@ -51,7 +51,7 @@ def payload(stdout: str = "", stderr: str = "", command: str = "python3 x.py") -
 
 def run(data: dict | str) -> subprocess.CompletedProcess[str]:
     stdin = data if isinstance(data, str) else json.dumps(data)
-    return subprocess.run([sys.executable, str(HOOK)], input=stdin, capture_output=True, text=True)
+    return subprocess.run([sys.executable, "-B", str(HOOK)], input=stdin, capture_output=True, text=True)
 
 
 def context(r: subprocess.CompletedProcess[str]) -> str:
@@ -309,6 +309,8 @@ ROOT = HOOKS.parents[1]
 
 def load_scan():
     sys.path.insert(0, str(HOOKS))
+    writes = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True  # US-016: no .pyc for a live hook to read stale
     try:
         spec = importlib.util.spec_from_file_location("diagnostic_scan", HOOK)
         assert spec is not None and spec.loader is not None
@@ -316,6 +318,7 @@ def load_scan():
         spec.loader.exec_module(module)
         return module
     finally:
+        sys.dont_write_bytecode = writes
         sys.path.remove(str(HOOKS))
 
 

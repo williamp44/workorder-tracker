@@ -554,3 +554,26 @@ STATUS: US-010 [x] (docs; numbers pasted from commands)
   - Still open from earlier reviews: R2-1 (US-015 Steps 1-2 blocked), R2-2 (guard_git
     size), R2-3 (stale .pyc), R1-1 live firing on a machine WITHOUT python3 (not run).
   - CI not run: the branch has not been pushed. A person pushes it.
+
+## Sprint 4: BLOCKED (2026-10-10), session not launched with GATE_EDIT=1
+`echo "GATE_EDIT=[$GATE_EDIT]"` -> `GATE_EDIT=[]` (it was [1] earlier in this session;
+the session appears to have been relaunched without it).
+First gate edit (US-016, settings.json `python3` -> `python3 -B`) ->
+    PreToolUse:Edit hook error: .claude/settings.json is a gate, and a gate cannot check its
+    own weakening. Ask the person to change it deliberately, outside this turn.
+Per the Rules: stopped; no gate file was written through a shell.
+
+Done without a gate edit (US-016, test half):
+- Tests start hooks with `-B` (hook_command(); test_guard_git and test_diagnostic_scan too),
+  and load()/load_scan() import with sys.dont_write_bytecode set.
+- test_running_and_importing_hooks_leaves_no_bytecode_behind (a copy of the hooks, run and
+  imported through the suite's helpers; no __pycache__ after). RED on the base: hook_command
+  and load(name, hooks) do not exist there.
+- Evidence: rm -rf .claude/hooks/__pycache__; ruff OK; 187 hook tests passed; then
+    ls: cannot access '.claude/hooks/__pycache__': No such file or directory
+  Full suite: 365 passed in 21.80s.
+Waiting on a gate edit: settings.json `python3 -B` (6 commands), its test
+(test_every_hook_script_is_launched_without_writing_bytecode, written and run RED, then
+removed so the branch stays green), and the two mutants. US-017, US-018 and US-019 are
+all gate edits (guard_git.py, guard_gates.py, mutation_check.py).
+To unblock: relaunch Claude Code with GATE_EDIT=1, as P-1 requires.

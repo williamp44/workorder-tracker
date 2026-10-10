@@ -33,16 +33,26 @@ def bare_python_first_on_path(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     return tree, env
 
 
-def load(name: str):
-    sys.path.insert(0, str(HOOKS))
+def hook_command(script: Path) -> list[str]:
+    """How the suite starts a hook. -B, as the hooks are launched: a .pyc
+    written here is one a live hook could later read stale (US-016)."""
+    return [sys.executable, "-B", str(script)]
+
+
+def load(name: str, hooks: Path = HOOKS):
+    """Import a hook by path, without writing its bytecode (US-016)."""
+    sys.path.insert(0, str(hooks))
+    writes = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
-        spec = importlib.util.spec_from_file_location(name, HOOKS / f"{name}.py")
+        spec = importlib.util.spec_from_file_location(name, hooks / f"{name}.py")
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return module
     finally:
-        sys.path.remove(str(HOOKS))
+        sys.dont_write_bytecode = writes
+        sys.path.remove(str(hooks))
 
 
 def run_hook(name: str, payload: dict | str) -> dict | None:
@@ -53,7 +63,7 @@ def run_hook(name: str, payload: dict | str) -> dict | None:
     stdin = payload if isinstance(payload, str) else json.dumps(payload)
     env = {k: v for k, v in os.environ.items() if k != "GATE_EDIT"}
     r = subprocess.run(
-        [sys.executable, str(HOOKS / f"{name}.py")],
+        hook_command(HOOKS / f"{name}.py"),
         input=stdin, capture_output=True, text=True, cwd=ROOT, env=env,
     )
     assert r.returncode == 0, r.stderr
@@ -62,6 +72,21 @@ def run_hook(name: str, payload: dict | str) -> dict | None:
 
 def denied(decision: dict | None) -> bool:
     return bool(decision) and decision["hookSpecificOutput"].get("permissionDecision") == "deny"
+
+
+# --- no stale bytecode (US-016) ---------------------------------------------
+# Python checks a .pyc against its source's mtime and size. A same-length edit
+# within one second matched both, and a hook ran its OLD code. -B stops a
+# process writing .pyc, not reading it, so no writer may leave one behind.
+
+def test_running_and_importing_hooks_leaves_no_bytecode_behind(tmp_path):
+    hooks = tmp_path / "hooks"
+    shutil.copytree(HOOKS, hooks, ignore=shutil.ignore_patterns("__pycache__", ".fired.log"))
+    for name in ("guard_git", "guard_gates", "diagnostic_scan", "post_edit_check"):
+        subprocess.run(hook_command(hooks / f"{name}.py"), input="{}", capture_output=True, text=True)
+    for name in ("guard_git", "guard_shared", "diagnostic_scan", "post_edit_check"):
+        load(name, hooks)
+    assert not (hooks / "__pycache__").exists(), sorted(p.name for p in (hooks / "__pycache__").iterdir())
 
 
 # --- guard_gates: the gates cannot be edited inside a gated turn ------------
@@ -149,7 +174,7 @@ def run_gates_launched_with(gate_edit: str | None, payload: dict) -> dict | None
     env = {k: v for k, v in os.environ.items() if k != "GATE_EDIT"}
     if gate_edit is not None:
         env["GATE_EDIT"] = gate_edit
-    r = subprocess.run([sys.executable, str(HOOKS / "guard_gates.py")],
+    r = subprocess.run(hook_command(HOOKS / "guard_gates.py"),
                        input=json.dumps(payload), capture_output=True, text=True, cwd=ROOT, env=env)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout) if r.stdout.strip() else None
@@ -199,7 +224,7 @@ def run_copied(hooks: Path, name: str, payload: dict, gate_edit: str | None = No
     env = {k: v for k, v in os.environ.items() if k != "GATE_EDIT"}
     if gate_edit is not None:
         env["GATE_EDIT"] = gate_edit
-    r = subprocess.run([sys.executable, str(hooks / f"{name}.py")], input=json.dumps(payload),
+    r = subprocess.run(hook_command(hooks / f"{name}.py"), input=json.dumps(payload),
                        capture_output=True, text=True, cwd=ROOT, env=env)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout) if r.stdout.strip() else None
@@ -311,7 +336,7 @@ def test_post_edit_check_is_silent_on_a_clean_file_whatever_python_is_on_path(tm
     code = ("import json, sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]);"
             "import post_edit_check as p;"
             "print(json.dumps(p.findings(Path(sys.argv[2]) / 'app' / 'services.py', Path(sys.argv[2]))))")
-    r = subprocess.run([sys.executable, "-c", code, str(HOOKS), str(tree)], cwd=tree,
+    r = subprocess.run([sys.executable, "-B", "-c", code, str(HOOKS), str(tree)], cwd=tree,
                        capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout) == []
@@ -327,7 +352,7 @@ def test_post_edit_check_says_the_layer_is_off_when_there_is_no_venv(tmp_path):
     edited = tmp_path / "edited.py"
     edited.write_text("x = 1\n")
     r = subprocess.run(
-        [sys.executable, str(HOOKS / "post_edit_check.py")],
+        hook_command(HOOKS / "post_edit_check.py"),
         input=json.dumps({"cwd": str(tmp_path), "tool_input": {"file_path": str(edited)}}),
         capture_output=True, text=True)
     assert r.returncode == 2

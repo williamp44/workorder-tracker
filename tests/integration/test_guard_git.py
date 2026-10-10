@@ -40,7 +40,7 @@ def repo(tmp_path_factory) -> Path:
 def denied(repo: Path, command: str, tool: str = "Bash") -> bool:
     env = {k: v for k, v in os.environ.items() if k != "GATE_EDIT"}
     r = subprocess.run(
-        [sys.executable, str(HOOK)],
+        [sys.executable, "-B", str(HOOK)],
         input=json.dumps({"tool_name": tool, "tool_input": {"command": command}, "cwd": str(repo)}),
         capture_output=True, text=True, env=env,
     )
