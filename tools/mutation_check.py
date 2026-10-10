@@ -227,10 +227,28 @@ MUTANTS = (
         '"--preset", "default",',
     ),
     Mutant(
+        "git-hook-ignores-global-options",
+        ".claude/hooks/guard_git.py",
+        "        if a in GIT_OPTS_WITH_VALUE:\n",
+        "        if False:\n",
+    ),
+    Mutant(
+        "git-hook-ignores-nested-shell",
+        ".claude/hooks/guard_git.py",
+        "if w and program(w[0]) in SHELLS:",
+        "if False:",
+    ),
+    Mutant(
+        "git-hook-runs-heredoc-subshells",
+        ".claude/hooks/guard_git.py",
+        "subshells(guard_shared.without_heredocs(line))",
+        "subshells(line)",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
-        'if any(a in ("-A", "--all", "-u", "--update") for a in args):',
-        'if any(a in ("-u", "--update") for a in args):',
+        'or any("A" in a[1:] or "u" in a[1:] for a in short)):',
+        'or any("u" in a[1:] for a in short)):',
     ),
     Mutant(
         "migration-default-drifts-from-model",

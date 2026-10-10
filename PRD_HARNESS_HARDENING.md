@@ -114,9 +114,9 @@ GATE_EDIT=1 ./ralph.sh harness_hardening 20 2 sonnet     # from the repo root, o
 ## Task Summary
 
 - **Total:** 10 build tasks + 3 review gates = 13
-- **Progress:** 5/13 complete (38%)
+- **Progress:** 6/13 complete (46%)
 - **Status:** In progress
-- **Next Task:** US-005
+- **Next Task:** US-006
 
 ## Task Dependencies
 
@@ -230,7 +230,7 @@ graph TD
 **Status:** NOT STARTED
 
 - [x] **US-004** guard_gates: missing gates, case variants (~15 min, ~50 lines) [depends: US-REVIEW-S1]
-- [ ] **US-005** guard_git: find git inside wrappers, global options, PowerShell syntax (~25 min, ~120 lines) [depends: US-REVIEW-S1]
+- [x] **US-005** guard_git: find git inside wrappers, global options, PowerShell syntax (~25 min, ~120 lines) [depends: US-REVIEW-S1]
 - [ ] **US-006** guard_git: every discard form, cwd drift, aliases, `--staged` false positive (~25 min, ~120 lines) [depends: US-005]
 - [ ] **US-REVIEW-S2** Sprint 2 Review 🚧 GATE (~5 min) [depends: US-004, US-006]
 

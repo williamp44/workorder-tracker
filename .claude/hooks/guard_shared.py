@@ -37,7 +37,8 @@ HEREDOC = re.compile(r"""<<-?\s*(?P<q>['"]?)(?P<tag>[A-Za-z_][A-Za-z0-9_]*)(?P=q
 SEPARATORS = ("&&", "||", ";", "|", "\n")
 
 
-def _without_heredocs(line: str) -> str:
+def without_heredocs(line: str) -> str:
+    """`line` with every heredoc body removed: a body is stdin, not commands."""
     out, skip_to = [], None
     for raw in line.split("\n"):
         if skip_to is not None:
@@ -85,5 +86,9 @@ def _split_unquoted(text: str) -> list[str]:
 
 
 def commands(line: str) -> list[str]:
-    """Each command in a compound shell line, quotes and heredocs respected."""
-    return [c.strip() for c in _split_unquoted(_without_heredocs(line or "")) if c.strip()]
+    """Each command in a compound shell line, quotes and heredocs respected.
+
+    A PowerShell line continuation (a backtick before the newline) is joined
+    first; otherwise `git add `<newline> -A` reads as two harmless commands."""
+    joined = (line or "").replace("`\r\n", " ").replace("`\n", " ")
+    return [c.strip() for c in _split_unquoted(without_heredocs(joined)) if c.strip()]

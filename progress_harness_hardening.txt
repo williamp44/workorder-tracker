@@ -261,3 +261,37 @@ Full gate run: ruff All checks passed! | check_types 0 diagnostics | check_fp 0 
     pytest 263 passed | check_red: 46 new, 11 controls, OK all 35 new RED
     mutation: OK 32 of 32 killed (post-edit-forgets-hook-siblings exit 1)
 STATUS: VERIFIED
+
+## US-005 guard_git parsing
+RED: tests/integration/test_guard_git.py, against a temp repo (f.txt dirty):
+    FAILED test_us005_refuses[...] for every deny row: git -C . add -A | git -c core.x=1 add -A |
+      git --no-pager add -A | git.exe add -A | git add -Av | git add -uv | git add :/ |
+      git add -- :/ | git add ':(top)' | bash -c "git add -A" | sh -c 'git checkout -- f.txt' |
+      env git add -A | & git add -A | cmd /c git add -A | pwsh -Command "git add -A" |
+      powershell -c "git add -A" | git add `<newline> -A | $(git add -A)
+    18 failed, 8 passed (the 8 allow rows, @control; one added: echo '$(git add -A)',
+    a single-quoted $( ) that the shell does not run)
+Implementation: judge() recurses through $( ) bodies (outside single
+quotes) and through bash|sh|zsh|dash|pwsh|powershell -c/-Command scripts.
+It unwraps env/&/command/exec/cmd /c, normalises git.exe, and skips git's
+global options (-C also moves the cwd used for the dirty checks).
+check_add refuses short clusters containing A or u, and :/ / :(top) pathspecs.
+guard_shared.commands() joins PowerShell backtick-newline continuations.
+The stated limits are in the guard_git docstring.
+Mutant git-hook-allows-add-all was RETARGETED: its old pattern no longer
+exists after the restructure. It still removes the -A refusal.
+
+FOUND LIVE while committing: the new guard refused my own commit command,
+because a heredoc body (this progress text) contained "$(git add -A)".
+subshells() scanned the raw line, heredoc bodies included. Fixed: $( ) is
+looked for only after heredoc bodies are removed (guard_shared.without_heredocs,
+now public). Allow row added (RED on the new code before the fix):
+    FAILED test_us005_allows[cat >> notes.txt <<'EOF'\nthe guard now refuses $(git add -A)\nEOF]
+Mutant git-hook-runs-heredoc-subshells added.
+This entry going through is itself the live check of that fix.
+
+Full gate run (after the fix):
+    ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 292 passed | check_red: 48 new, 11 controls, OK all 37 new RED
+    mutation (re-run with the new mutant): OK 35 of 35 killed
+STATUS: US-005 [x] VERIFIED
