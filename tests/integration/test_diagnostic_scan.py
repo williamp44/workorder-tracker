@@ -15,6 +15,7 @@ run teaches the reader to ignore it.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -446,6 +447,30 @@ def test_touching_a_clean_file_is_not_reported(tmp_path):
     repo = repo_with_committed_bad_file(tmp_path)
     os.utime(repo / "a.py")  # mtime now, content exactly as committed
     assert shell_check(repo, "touch a.py") == ""
+
+
+# --- US-023: every file the check saw is named --------------------------------
+# On PR 5 the message was a header over "... and 7 more file(s) not checked":
+# the 5 checked files were clean, so they added no lines, and nothing was named.
+
+def test_every_candidate_file_is_named_checked_or_not(tmp_path):
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    (tmp_path / "a_bad.py").write_text(BAD)
+    names = ["a_bad.py"] + [f"f{i}.py" for i in range(1, 7)]
+    for n in names[1:]:
+        (tmp_path / n).write_text("x = 1\n")
+    ctx = shell_check(tmp_path)
+    assert all(n in ctx for n in names), ctx
+    assert "1 with findings, 4 clean, 2 not checked" in ctx, ctx
+    assert re.search(r"\.\.\. and \d+ more", ctx) is None, ctx
+
+
+@pytest.mark.control("pins precision: all candidates clean and checked means nothing to report; base is quiet too")
+def test_all_candidates_clean_reports_nothing(tmp_path):
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    for i in range(3):
+        (tmp_path / f"ok{i}.py").write_text("x = 1\n")
+    assert shell_check(tmp_path) == ""
 
 
 def test_outside_a_git_work_tree_the_check_falls_back_to_mtime_and_says_so(tmp_path):

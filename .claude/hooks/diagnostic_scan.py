@@ -426,10 +426,24 @@ def shell_written(data: dict) -> list[str]:
         python = sys.executable  # CI and mutation copies have no .venv
     else:
         return []  # post_edit_check already says loudly that the layer is off
-    out = [p for f in files[:MAX_WRITTEN] for p in post_edit_check.findings(f, root, python)]
-    if len(files) > MAX_WRITTEN:
-        out.append(f"... and {len(files) - MAX_WRITTEN} more file(s) not checked")
-    if out and not judged_by_git:
+    # Every candidate is named, checked or not (US-023). Returning findings only
+    # made 5 clean files vanish and left "... and 7 more" naming nothing.
+    checked = [(f, post_edit_check.findings(f, root, python)) for f in files[:MAX_WRITTEN]]
+    unchecked = files[MAX_WRITTEN:]
+    flagged = sum(1 for _, found in checked if found)
+    if not flagged and not unchecked:
+        return []  # all checked and clean: not news
+
+    def rel(f: pathlib.Path) -> str:
+        return f.relative_to(root).as_posix() if root in f.parents else str(f)
+
+    out = [f"{len(files)} file(s): {flagged} with findings, {len(checked) - flagged} clean, "
+           f"{len(unchecked)} not checked"]
+    for f, found in checked:
+        out.append(f"{rel(f)}: {len(found)} finding(s)" if found else f"{rel(f)}: clean")
+        out.extend(f"  {line}" for line in found)
+    out.extend(f"{rel(f)}: not checked (over the limit of {MAX_WRITTEN})" for f in unchecked)
+    if not judged_by_git:
         out.insert(0, "(not a git work tree: judged by mtime, so a file git rewrote may be listed)")
     return out
 

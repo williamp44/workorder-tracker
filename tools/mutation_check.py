@@ -347,6 +347,12 @@ MUTANTS = (
         "    keep = dirty\n",
     ),
     Mutant(
+        "shell-check-hides-unchecked-names",
+        ".claude/hooks/diagnostic_scan.py",
+        '    out.extend(f"{rel(f)}: not checked (over the limit of {MAX_WRITTEN})" for f in unchecked)\n',
+        '    out.append(f"... and {len(unchecked)} more file(s) not checked")\n',
+    ),
+    Mutant(
         "commit-gated-on-filter-allowed",
         ".claude/hooks/guard_git.py",
         "if gate and is_commit_or_push(segment, cwd):",
