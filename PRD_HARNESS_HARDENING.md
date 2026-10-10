@@ -111,9 +111,9 @@ GATE_EDIT=1 ./ralph.sh harness_hardening 20 2 sonnet     # from the repo root, o
 ## Task Summary
 
 - **Total:** 10 build tasks + 3 review gates = 13
-- **Progress:** 0/13 complete (0%)
-- **Status:** Not started
-- **Next Task:** US-001
+- **Progress:** 1/13 complete (8%)
+- **Status:** In progress
+- **Next Task:** US-002
 
 ## Task Dependencies
 
@@ -151,9 +151,9 @@ graph TD
 ---
 
 ## Sprint 1: Make the hooks actually run (~45 min)
-**Status:** NOT STARTED
+**Status:** IN PROGRESS
 
-- [ ] **US-001** Shell hooks cover PowerShell (~15 min, ~60 lines) [depends: P-1, P-2]
+- [x] **US-001** Shell hooks cover PowerShell (~15 min, ~60 lines) [depends: P-1, P-2]
 - [ ] **US-002** post_edit_check runs on Windows and POSIX, and is silent on a clean file (~20 min, ~80 lines) [depends: P-2]
 - [ ] **US-003** diagnostic_scan also scans failed commands (~15 min, ~70 lines) [depends: US-001]
 - [ ] **US-REVIEW-S1** Sprint 1 Review 🚧 GATE (~5 min) [depends: US-002, US-003]

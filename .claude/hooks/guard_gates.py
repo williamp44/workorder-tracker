@@ -1,4 +1,4 @@
-"""PreToolUse on Write|Edit|MultiEdit: a gate cannot check its own weakening.
+"""PreToolUse on Write|Edit|MultiEdit|NotebookEdit: a gate cannot check its own weakening.
 
 The gates are the files that decide whether work is correct: these hooks,
 their registration, CI, the linter and type-checker configs, and the mutant
@@ -80,9 +80,10 @@ def main() -> int:
         guard_shared.deny(f"this hook could not read its payload ({exc}), so it cannot "
                           f"tell whether a gate is being edited. Refused.")
         return 0
-    if data.get("tool_name") not in ("Write", "Edit", "MultiEdit"):
+    if data.get("tool_name") not in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
         return 0
-    path = (data.get("tool_input") or {}).get("file_path")
+    tool_input = data.get("tool_input") or {}
+    path = tool_input.get("file_path") or tool_input.get("notebook_path")
     ok, why = edit_allowed(path)
     if ok:
         return 0

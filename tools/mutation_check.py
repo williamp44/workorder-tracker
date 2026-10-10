@@ -171,6 +171,20 @@ MUTANTS = (
         "os.environ.get(OVERRIDE)",
     ),
     Mutant(
+        "shell-hooks-skip-powershell",
+        ".claude/settings.json",
+        '"matcher": "Bash|PowerShell",\n        "hooks": [\n          {\n            "type": "command",\n'
+        '            "command": "python3 \\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py',
+        '"matcher": "Bash",\n        "hooks": [\n          {\n            "type": "command",\n'
+        '            "command": "python3 \\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py',
+    ),
+    Mutant(
+        "gate-hook-skips-notebooks",
+        ".claude/hooks/guard_gates.py",
+        '("Write", "Edit", "MultiEdit", "NotebookEdit")',
+        '("Write", "Edit", "MultiEdit")',
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'if any(a in ("-A", "--all", "-u", "--update") for a in args):',

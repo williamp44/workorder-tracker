@@ -1,0 +1,67 @@
+# Progress: PRD_HARNESS_HARDENING.md
+# Execution: in-session, task by task (Decision 2). Session launched with GATE_EDIT=1.
+
+## Preconditions (2026-10-09)
+- P-1: applied as 59a5d6e.
+- P-2: .venv exists (.venv/Scripts/python.exe).
+- GATE_EDIT=1 in the session env: `echo "GATE_EDIT=[$GATE_EDIT]"` -> `GATE_EDIT=[1]`.
+
+## Baseline in this session: NOT green, fixed before US-001
+Baseline gates, run with GATE_EDIT=1 inherited:
+    All checks passed!                      (ruff)
+    INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics   (check_types)
+    0 finding(s)                            (check_fp)
+    FAILED tests/integration/test_hooks.py::test_gate_hook_denies_through_its_stdin_contract
+    1 failed, 224 passed in 8.52s
+    FAIL control failed: the suite is red without any mutation
+Cause: run_hook() passed the session env to the hook, so GATE_EDIT=1 opened
+the gate under test. `env -u GATE_EDIT pytest -k stdin_contract` -> 1 passed.
+Fix: aff6f44 (run_hook drops GATE_EDIT). After: 225 passed.
+Note: the baseline table's 215 tests is pre-P-1; P-1 added 10 -> 225.
+
+## US-001 Shell hooks cover PowerShell
+RED (before the code change):
+    FAILED tests/integration/test_settings.py::test_shell_hooks_judge_every_shell_tool[guard_git.py]
+      AssertionError: guard_git.py matcher is ['Bash']
+    FAILED tests/integration/test_settings.py::test_shell_hooks_judge_every_shell_tool[diagnostic_scan.py]
+      AssertionError: diagnostic_scan.py matcher is ['Bash']
+    FAILED tests/integration/test_settings.py::test_gate_hook_covers_notebook_edits
+      AssertionError: ['Edit', 'MultiEdit', 'Write']
+    FAILED tests/integration/test_hooks.py::test_gate_hook_judges_notebook_edits_by_their_notebook_path
+      assert False  where False = denied(None)
+    4 failed, 3 passed, 33 deselected
+The PowerShell-payload guard_git test passed on the base (guard_git never
+reads tool_name), so it is marked @control.
+
+Live (this session; hooks were re-read without a restart):
+- PowerShell `git add -A --dry-run` ->
+    PreToolUse:PowerShell hook error: `git add -A` / `--all` / `-u` stages everything,
+    including files nobody meant to commit. Stage the explicit paths this change touches.
+- PowerShell `Write-Output "WARN live-probe"` -> additionalContext:
+    L1     WARN live-probe
+            ^ a tool logged a warning
+- .fired.log armed, one PowerShell call:
+    2026-10-09T20:42:07 fired tool=PowerShell
+    2026-10-09T20:42:07   output=11 chars hits=0 cmd_hazards=[]
+  Log deleted after.
+- PowerShell tool_input keys: NOT observed by a hook (the trace does not log
+  key names). As sent by the caller: command, description.
+
+NEW FINDING for US-007: the PowerShell tool_response has no
+`noOutputExpected` key. Live, every PowerShell call:
+    tool_response keys moved: pinned ['interrupted', 'isImage', 'noOutputExpected', 'stderr', 'stdout'],
+    live ['interrupted', 'isImage', 'stderr', 'stdout']
+That is a key LOSS, so "alarm on loss only" as written in US-007 would still
+alarm on every PowerShell call. US-007 must pin per tool, or treat
+noOutputExpected as not required.
+
+Full gate run (GATE_EDIT=1 in env):
+    ruff: All checks passed!
+    check_types: INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics
+    check_fp: 0 finding(s)
+    pytest: 232 passed in 8.49s
+    check_red --base main: 10 new test(s), 6 declared control(s)
+                           OK   all 4 new test(s) were RED on the base code
+    mutation_check: OK   control passed, equivalent canary survived, 25 of 25 mutants killed
+      (shell-hooks-skip-powershell exit 1, gate-hook-skips-notebooks exit 1)
+STATUS: US-001 [x] VERIFIED

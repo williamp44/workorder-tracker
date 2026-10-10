@@ -87,6 +87,13 @@ def test_gate_hook_denies_through_its_stdin_contract():
         "tool_name": "Edit", "tool_input": {"file_path": str(ROOT / "app/db.py")}}) is None
 
 
+def test_gate_hook_judges_notebook_edits_by_their_notebook_path():
+    # NotebookEdit carries notebook_path, not file_path (F6).
+    assert denied(run_hook("guard_gates", {
+        "tool_name": "NotebookEdit",
+        "tool_input": {"notebook_path": str(ROOT / ".claude/hooks/x.ipynb")}}))
+
+
 def test_gate_hook_denies_an_unreadable_payload():
     assert denied(run_hook("guard_gates", "{not json"))
 
@@ -140,6 +147,12 @@ def test_the_override_does_not_wave_through_a_payload_with_no_path():
 ])
 def test_staging_everything_is_refused(command):
     assert denied(run_hook("guard_git", {"tool_input": {"command": command}, "cwd": str(ROOT)}))
+
+
+@pytest.mark.control("pins that guard_git judges the command, whichever shell tool sent it (F1)")
+def test_staging_everything_from_powershell_is_refused():
+    assert denied(run_hook("guard_git", {
+        "tool_name": "PowerShell", "tool_input": {"command": "git add -A"}, "cwd": str(ROOT)}))
 
 
 @pytest.mark.parametrize("command", [
