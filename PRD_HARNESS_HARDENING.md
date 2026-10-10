@@ -113,10 +113,10 @@ GATE_EDIT=1 ./ralph.sh harness_hardening 20 2 sonnet     # from the repo root, o
 
 ## Task Summary
 
-- **Total:** 10 build tasks + 3 review gates = 13
-- **Progress:** 7/13 complete (54%)
+- **Total:** 15 build tasks + 3 review gates = 18 (US-011 to US-015 added 2026-10-09 from the transcript audit; they sit before US-REVIEW-S2)
+- **Progress:** 7/18 complete (39%)
 - **Status:** In progress
-- **Next Task:** US-REVIEW-S2
+- **Next Task:** US-011
 
 ## Task Dependencies
 
@@ -130,8 +130,14 @@ graph TD
   RS1 --> US004[US-004 guard_gates scope]
   RS1 --> US005[US-005 guard_git parsing]
   US005 --> US006[US-006 guard_git discard forms]
+  US006 --> US011[US-011 crashing hook refuses]
+  US011 --> US012[US-012 post_edit_check in-project only]
+  US012 --> US013[US-013 shell-written python checked]
+  US006 --> US014[US-014 refuse commit gated on a filter]
+  US014 --> US015[US-015 updatedInput probe, then decide]
   US004 --> RS2{US-REVIEW-S2}
-  US006 --> RS2
+  US013 --> RS2
+  US015 --> RS2
   RS2 --> US007[US-007 contract: alarm on loss only]
   RS2 --> US008[US-008 pyrefly ERROR pattern]
   RS2 --> US009[US-009 gate drift via shell, optional]
@@ -232,7 +238,12 @@ graph TD
 - [x] **US-004** guard_gates: missing gates, case variants (~15 min, ~50 lines) [depends: US-REVIEW-S1]
 - [x] **US-005** guard_git: find git inside wrappers, global options, PowerShell syntax (~25 min, ~120 lines) [depends: US-REVIEW-S1]
 - [x] **US-006** guard_git: every discard form, cwd drift, aliases, `--staged` false positive (~25 min, ~120 lines) [depends: US-005]
-- [ ] **US-REVIEW-S2** Sprint 2 Review 🚧 GATE (~5 min) [depends: US-004, US-006]
+- [ ] **US-011** A crashing PreToolUse hook refuses, not allows (~20 min, ~60 lines) [depends: US-006]
+- [ ] **US-012** post_edit_check judges only files inside the project (~10 min, ~30 lines) [depends: US-011]
+- [ ] **US-013** Python files written through a shell are checked too (~25 min, ~90 lines) [depends: US-012]
+- [ ] **US-014** Refuse a commit gated on a filter's exit status (~20 min, ~80 lines) [depends: US-006]
+- [ ] **US-015** Probe updatedInput, then decide how truncated output is handled (~30 min) [depends: US-014]
+- [ ] **US-REVIEW-S2** Sprint 2 Review 🚧 GATE (~5 min) [depends: US-004, US-006, US-011, US-012, US-013, US-014, US-015]
 
 ### US-004: guard_gates scope (~15 min, ~50 lines)
 
@@ -316,9 +327,150 @@ graph TD
 
 **Acceptance Criteria:** every row passes; the false-positive row was RED on `main`; mutation check all killed.
 
+### US-011: A crashing PreToolUse hook refuses, not allows (~20 min, ~60 lines)
+
+**Found by:** the transcript audit of this run, 2026-10-09. From call #149 to #154 (about 18 s), `guard_shared.py` referenced an undefined name, `_without_heredocs`, while US-005 was being edited. Every hook that imports it would crash. A crashing PreToolUse hook exits 1, which Claude Code treats as a non-blocking error, so the tool call goes ahead and `guard_git` was effectively off. Hooks run from the working tree, so any half-finished hook edit opens this window.
+
+**Implementation:**
+- `guard_git.py` and `guard_gates.py`:
+  - Wrap the `import guard_shared` line in `try/except Exception` and keep the exception.
+  - Wrap `main()`'s body in `try/except Exception`.
+  - On either failure, print a PreToolUse **deny** whose reason names the hook, the exception type and its message, e.g. `guard_git crashed (NameError: ...): refusing rather than guessing. Fix the hook through Edit.`
+  - Print that deny with `json.dumps` inline, never through `guard_shared.deny`, because the import may be the thing that failed.
+- **Deadlock check, the reason this is safe here:**
+  - A crashed `guard_git` blocks shell calls only. The fix goes through Edit, which `guard_git` does not judge.
+  - A crashed `guard_gates` blocks Write/Edit. Without `GATE_EDIT=1` the agent may not edit hooks anyway, so a person fixes it.
+  - With `GATE_EDIT=1`, `guard_gates` must **fail open but say so**: an `additionalContext` naming the crash, as the override announce does. Otherwise the agent could not repair the hook it just broke. That is the ssi `guard_tdd` deadlock (FINDINGS_HARNESS_REVIEW).
+- `diagnostic_scan.py` and `post_edit_check.py` report and never block, so they keep their exit contract.
+- Tests in `tests/integration/test_hooks.py`:
+  - Copy `.claude/hooks` to `tmp_path`, write a `guard_shared.py` that raises `NameError` at call time, and run the copied `guard_git` on `git status`. Expect a deny that names `NameError`.
+  - Same with a `guard_shared.py` containing a syntax error (import-time failure). Expect a deny.
+  - `guard_gates` with a broken `guard_shared`: deny without `GATE_EDIT`; with `GATE_EDIT=1`, no deny and `additionalContext` naming the crash.
+  - All of these are RED on the base, where the copied hook exits 1 and prints nothing.
+- Mutants: `git-hook-crash-fails-open` (the `except` removed from `guard_git.main`) and `gate-hook-crash-blocks-override` (the `GATE_EDIT` branch removed from the crash path).
+
+**Acceptance Criteria:**
+- Every test above was RED on the base, pasted.
+- `check_red --base main` passes.
+- The mutation check kills everything.
+- **Live, in a scratch copy only:** never break the live hooks to test this.
+
+### US-012: post_edit_check judges only files inside the project (~10 min, ~30 lines)
+
+**Found by:** the same audit. The hook linted a scratchpad script outside the repo against the repo's ruff config. It reported B007 style noise along with real findings, on a file nobody asked it to judge.
+
+**Implementation:**
+- In `findings()`, return `[]` when `root` is not in `path.resolve().parents`.
+  - The pyrefly branch already has this guard. Ruff does not.
+- The existing tests `test_post_edit_check_reports_a_ruff_finding_in_the_edited_file` and `test_post_edit_check_is_silent_on_a_clean_file` write to `tmp_path` and pass `ROOT`. Change them to pass `tmp_path` as the root, so the file is inside the project they name.
+  - This changes existing tests. Say so in the commit message.
+- New test: a `.py` file with an ARG001 finding in `tmp_path`, judged with `root=ROOT`. Expect `[]`. RED on the base.
+- Mutant: `post-edit-judges-outside-files` (the root guard removed).
+
+**Acceptance Criteria:** the new test was RED on the base; the changed tests pass; the mutation check kills everything.
+
+### US-013: Python files written through a shell are checked too (~25 min, ~90 lines)
+
+**Found by:** the same audit, plus US-002's own gate run. `tests/integration/test_check_types.py` was edited by a Bash `python - <<'EOF'` script (#49), so `post_edit_check` never saw it. An unused `import os` (F401) got through the turn and was caught only by `ruff check .` in the full gate run. The `heredoc_backslash` warning fired on that command, but nothing said the in-turn lint had been skipped.
+
+**Implementation:**
+- In `diagnostic_scan.py`, add a pure function `recently_written(root: Path, since: float) -> list[Path]`. It returns the `.py` files under `root` (excluding `.git`, `.venv`, `__pycache__`) whose mtime is at or after `since`.
+- In `main()`, for `Bash|PowerShell` PostToolUse **and** PostToolUseFailure:
+  - Compute `since = now - duration_ms/1000 - 2`. `duration_ms` is in the recorded payload contract.
+  - If any `.py` files changed, call `post_edit_check.findings()` on each, importing the sibling the way the guards import `guard_shared`, with the venv interpreter from `post_edit_check.venv_python`.
+  - Report through `additionalContext`, headed `Python files written through a shell (post_edit_check did not see these):`.
+  - Skip silently when the venv is missing; `post_edit_check` already says so loudly.
+- Cost limit: the mtime walk must take under 200 ms on this repo; measure it and paste the number. The checks run only when files changed.
+- **Precision:**
+  - A command that writes no `.py` file reports nothing.
+  - `pytest` writes only `.pyc` files and temp dirs outside the repo, so it reports nothing. Test this with the real suite command.
+- Tests:
+  - `recently_written` on a tmp tree with one old and one new file returns only the new one.
+  - A payload whose `cwd` is a tmp project with a fresh `bad.py` (`def f(unused): return 1`) and `duration_ms=500` gets `additionalContext` naming ARG001.
+  - A payload with no fresh file gets none.
+  - All RED on the base.
+- Mutant: `shell-written-python-unchecked` (the `recently_written` call removed from `main`).
+
+**Acceptance Criteria:**
+- Tests RED on the base; the mutation check kills everything.
+- **Live:** `printf 'import os\n' > scratch_shell_probe.py` in Bash returns `additionalContext` naming F401 for that file. Delete the file after.
+- **Live:** `pytest -q` returns no such context.
+
+### US-014: Refuse a commit gated on a filter's exit status (~20 min, ~80 lines)
+
+**Found by:** the transcript audit. Call #10 ran `pytest … 2>&1 | tail -2 && git add … && git commit`. A pipeline's exit status is its last stage's, so `&&` saw `tail`'s 0, and a failing suite would still have committed. Demonstrated: without `pipefail` the chain continued after exit 1; with `set -o pipefail` it stopped. `pipefail` was never set in 97 shell calls. The existing `stderr_merged_then_truncated` warning fired on that call and changed nothing (0 of 7 warned uses changed). A refusal cannot be read past; a warning can.
+
+**Probe table → parametrized test** (through `run_hook("guard_git", ...)`; Bash and PowerShell payloads):
+
+| Command | Want |
+| --- | --- |
+| `pytest -q 2>&1 \| tail -2 && git commit -m x` | deny |
+| `pytest -q \| grep -E "passed\|failed" && git add a.py && git commit -m x` | deny |
+| `ruff check . \| head -5 && git push` | deny |
+| `python -m tools.check_red --base main \| tail -1 && git commit -m x` | deny |
+| `set -o pipefail; pytest -q \| tail -2 && git commit -m x` | allow |
+| `pytest -q && git commit -m x` | allow |
+| `git log \| head -5 && git status` (no commit/push) | allow |
+| `pytest -q \| tail -2; git status` | allow |
+| `git commit -m "a \| tail && git commit"` (all quoted) | allow |
+| `cat >> notes.txt <<'EOF'` with a body containing `x \| tail && git commit` | allow |
+
+**Implementation:**
+- In `guard_git`, judge each statement (split on `;` and newline, with quotes and heredocs respected, through `guard_shared`) as a chain of `&&` segments.
+- Deny when an earlier segment has an unquoted pipe whose last stage is a filter (`tail`, `head`, `grep`, `sort`, `Select-String`, `Select-Object`, `findstr`), a later segment is `git commit` or `git push`, and `set -o pipefail` does not appear earlier in the line.
+- Deny reason: `this commit is gated on <filter>'s exit status, not on <first command>'s. A failing run would still commit. Add 'set -o pipefail;' or run the check and the commit as separate commands.`
+- Mutant: `commit-gated-on-filter-allowed`.
+
+**Acceptance Criteria:**
+- Deny rows RED on `main`; allow rows green there and marked `@control` with a reason.
+- **Live:** in Bash, `true | tail -1 && git commit --dry-run -m probe` is denied. `--dry-run` writes nothing.
+- The mutation check kills everything.
+
+### US-015: Probe `updatedInput`, then decide how truncated output is handled (~30 min; build only if the probe allows)
+
+**Found by:** the same audit. 24 of 97 shell calls threw output away: 7 with `2>&1 | tail/head`, which the hazard check flags, and 17 with `2>&1 | grep`, which it never sees. The warning changed behaviour 0 times. Whether anything was actually lost is unknown: on green runs the gate outputs carry no diagnostics. Instead of asking the agent to stop truncating, make truncation harmless. A PreToolUse hook can rewrite a command (`updatedInput`, documented). The details that decide whether that is safe are **not documented**.
+
+**Step 1, SPIKE: record before building.** Register a throwaway PreToolUse hook on Bash. It rewrites only the exact command `echo PROBE-ORIGINAL` to `echo PROBE-REWRITTEN`. Run it in three variants:
+- (a) `updatedInput` with no `permissionDecision`;
+- (b) with `"ask"`;
+- (c) with `"allow"`.
+
+For each variant, record in `docs/evidence/updated_input_probe.md`, with the pasted output:
+1. Which string ran.
+2. Whether the permission prompt still appears in default mode.
+3. What the agent's transcript shows: the original or the rewritten command.
+4. The same under `claude -p`.
+
+Remove the throwaway hook afterwards.
+
+**Decision rule (mechanical):** build Step 2 **only if** a rewrite applies without `"allow"`. With `"allow"` the rewrite would skip the permission prompt for every rewritten command in normal mode, which is worse than the problem it fixes. Otherwise mark this task `[x] DECIDED: not built`, link the evidence, and do Step 3 only.
+
+**Step 2 (only if allowed): the tee rewrite.**
+- New PreToolUse hook `truncation_log.py` on `Bash`. For a command where `2>&1` feeds a filter (`tail`, `head`, `grep`), rewrite it to `set -o pipefail; <producer> 2>&1 | tee "<log>" | <filter…>`.
+  - `<log>` is `.claude/hooks/.truncated/<tool_use_id>.log`, gitignored.
+- `diagnostic_scan` (PostToolUse and PostToolUseFailure) reads that log when it exists. It scans only lines **not** in the visible output, reports hits as `diagnostics the filter discarded:`, stays silent when there are none, and deletes the log.
+- `pipefail` makes a failing producer fail the call, so PostToolUseFailure fires and the agent sees the real exit status.
+- Per the docs, only one hook may rewrite a tool's input (the last to finish wins, nondeterministically). `test_settings.py` asserts that only `truncation_log.py` returns `updatedInput`.
+- Tests:
+  - the rewrite function on a table of commands;
+  - a discarded `WARN` line is reported;
+  - a green run reports nothing.
+- Mutant: `truncation-log-not-scanned`.
+
+**Step 3 (either way): the existing warning.**
+- If Step 2 was built, remove `stderr_merged_then_truncated` from `COMMAND_HAZARDS`; the log makes it redundant.
+- If not, remove it too, and record why in `docs/CHECKS.md`: 7 warned uses, 0 behaviour changes, 17 undetected `| grep` uses. US-014 now holds the part that mattered.
+- Update its tests and mutants with it. A check that is measured not to work and keeps firing teaches the reader to ignore hooks.
+
+**Acceptance Criteria:**
+- The probe evidence file exists, with all four questions answered for all three variants.
+- The decision is recorded in `progress_harness_hardening.txt`.
+- If Step 2 was built: **live**, `python -c "import sys; print('WARN hidden', file=sys.stderr); print('ok')" 2>&1 | tail -1` reports `WARN hidden` as discarded.
+- The mutation check kills everything.
+
 ### US-REVIEW-S2: Sprint 2 Review 🚧 GATE (~5 min)
 
-**Scope:** US-004 to US-006
+**Scope:** US-004 to US-006, and US-011 to US-015
 **Review Steps:**
 1. Full gate run, pasted.
 2. Re-run both `guard_git` probe matrices and the `guard_gates` matrix: 0 mismatches. Paste the output.
@@ -343,6 +495,7 @@ graph TD
 - `check_contract()` reports when a pinned top-level key or a pinned `tool_response` key is **gone**, or when `tool_response` stops being a dict.
 - Added keys are not reported. They were the only alarms seen live, and all of them were benign.
 - Tests are parametrized over the live extra-key sets from F7 (four distinct sets plus `returnCodeInterpretation`), each of which must give `[]`. A payload with `stdout` removed must still alarm.
+- **Amended 2026-10-09 (found in US-001):** PowerShell's `tool_response` has no `noOutputExpected`. That is a key *loss*, so "alarm on loss only" would still fire on every PowerShell call. Pin the contract per `tool_name`, or treat `noOutputExpected` as optional. A PowerShell payload without it must give `[]`.
 - Mutant: `contract-alarms-on-added-keys`.
 
 **Acceptance Criteria:** RED on `main` for every extra-key case; mutation check all killed. **Live:** a large-output command and a background command produce no contract note.
