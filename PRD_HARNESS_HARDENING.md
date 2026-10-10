@@ -47,7 +47,7 @@ an acceptance criterion. The probe scripts and their BEFORE output are in
 | F4 | `diagnostic_scan` never sees a failed command: a non-zero exit does not fire `PostToolUse`. The docs (as relayed) say it fires both; the live trace says it does not. | `.fired.log`: exit 0 command logged, exit 3 command not logged |
 | F5 | `guard_git` misses discard and stage-all forms, and has one false positive. | 17 of 29 (round 1) and 9 of 20 (round 2) probe cases mismatched; the table is in US-005/US-006 |
 | F6 | `guard_gates` misses gate files, case variants and NotebookEdit. | 11 of 20 probe paths mismatched; the table is in US-004 |
-| F7 | `diagnostic_scan`'s payload-contract check raises a false "SHAPE MOVED" alarm whenever the harness adds a key. | 6 false alarms in one session: `persistedOutputPath`, `persistedOutputSize`, `backgroundTaskId`, `backgroundCwdHint`, `bashEditDiff` |
+| F7 | `diagnostic_scan`'s payload-contract check raises a false "SHAPE MOVED" alarm whenever the harness adds a key. | 6 false alarms in one session: `persistedOutputPath`, `persistedOutputSize`, `backgroundTaskId`, `backgroundCwdHint`, `bashEditDiff`, `returnCodeInterpretation` (seen when a command exits non-zero but is still reported as success, e.g. `grep -c` finding 0) |
 | F8 | `diagnostic_scan` matches pyrefly `WARN` but not pyrefly `ERROR`. | 40+ `ERROR ...` lines in one output, 0 hits |
 | F9 | The docs are stale: 17 mutants and 174 tests stated; 21 and 215 now. The guard commit says 35 tests; it added 37. | `mutation_check`, `pytest -q`, `check_red` outputs above |
 
@@ -339,10 +339,10 @@ graph TD
 **Implementation:**
 - `check_contract()` reports when a pinned top-level key or a pinned `tool_response` key is **gone**, or when `tool_response` stops being a dict.
 - Added keys are not reported. They were the only alarms seen live, and all of them were benign.
-- Tests are parametrized over the five live extra-key sets from F7, each of which must give `[]`. A payload with `stdout` removed must still alarm.
+- Tests are parametrized over the live extra-key sets from F7 (four distinct sets plus `returnCodeInterpretation`), each of which must give `[]`. A payload with `stdout` removed must still alarm.
 - Mutant: `contract-alarms-on-added-keys`.
 
-**Acceptance Criteria:** RED on `main` for the five extra-key cases; mutation check all killed. **Live:** a large-output command and a background command produce no contract note.
+**Acceptance Criteria:** RED on `main` for every extra-key case; mutation check all killed. **Live:** a large-output command and a background command produce no contract note.
 
 ### US-008: pyrefly ERROR lines (~10 min, ~20 lines)
 
