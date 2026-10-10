@@ -47,6 +47,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import time
 
@@ -340,13 +341,77 @@ def recently_written(root: pathlib.Path, since: float) -> list[pathlib.Path]:
     return sorted(found)
 
 
+def _git(root: pathlib.Path, *args: str) -> str | None:
+    """stdout of a git command, or None when git cannot answer (not a work tree)."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def committed_in_window(top: pathlib.Path, since: float) -> set[pathlib.Path] | None:
+    """Files changed by plain commits made since `since`, judged from the reflog.
+
+    Only `commit:` and `commit (initial):` entries count. If any other entry
+    (rebase, checkout, reset, merge, pull, an amend) falls in the window, the
+    files were rewritten by git, not written by the shell, so nothing counts:
+    PR 5's author rewrite was `rebase (pick)` + `commit (amend)` with identical
+    trees. None when the reflog cannot be read.
+    """
+    out = _git(top, "reflog", "--date=unix", "--format=%H%x00%gd%x00%gs")
+    if out is None:
+        return None
+    window = []
+    for line in out.splitlines():
+        sha, selector, subject = [*line.split("\x00"), "", ""][:3]
+        stamp = re.search(r"@\{(\d+)\}", selector)
+        if not stamp or int(stamp.group(1)) < since:
+            break  # newest first: the first older entry ends the window
+        window.append((sha, subject))
+    if not all(s.startswith(("commit: ", "commit (initial): ")) for _, s in window):
+        return set()
+    changed = set()
+    for sha, _ in window:
+        names = _git(top, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sha) or ""
+        changed |= {(top / n).resolve() for n in names.splitlines() if n}
+    return changed
+
+
+def written_by_shell(root: pathlib.Path, files: list[pathlib.Path], since: float
+                     ) -> tuple[list[pathlib.Path], bool]:
+    """(the recently modified files whose CONTENT changed, judged by git).
+
+    A file counts when it differs from HEAD (dirty or untracked) or a plain
+    commit in this command's window changed it. A rebase, checkout, stash or
+    touch gives a file a new mtime with content git already has; mtime alone
+    reported all of them. The bool is False when git could not judge, and the
+    files are then returned by mtime alone, which the message must say.
+    """
+    top_out = _git(root, "rev-parse", "--show-toplevel")
+    if top_out is None:
+        return files, False
+    top = pathlib.Path(top_out.strip()).resolve()
+    status = _git(top, "status", "--porcelain", "-z", "--untracked-files=all")
+    committed = committed_in_window(top, since)
+    if status is None or committed is None:
+        return files, False
+    dirty = set()
+    for entry in status.split("\x00"):
+        if len(entry) > 3 and entry[2] == " ":
+            dirty.add((top / entry[3:]).resolve())
+    keep = dirty | committed
+    return [f for f in files if f.resolve() in keep], True
+
+
 def shell_written(data: dict) -> list[str]:
     """post_edit_check's findings on the .py files this command wrote."""
     cwd, duration = data.get("cwd"), data.get("duration_ms")
     if not cwd or not isinstance(duration, (int, float)):
         return []
     root = pathlib.Path(cwd).resolve()
-    files = recently_written(root, time.time() - duration / 1000 - SLACK_S)
+    since = time.time() - duration / 1000 - SLACK_S
+    files, judged_by_git = written_by_shell(root, recently_written(root, since), since)
     if not files:
         return []
     try:
@@ -364,6 +429,8 @@ def shell_written(data: dict) -> list[str]:
     out = [p for f in files[:MAX_WRITTEN] for p in post_edit_check.findings(f, root, python)]
     if len(files) > MAX_WRITTEN:
         out.append(f"... and {len(files) - MAX_WRITTEN} more file(s) not checked")
+    if out and not judged_by_git:
+        out.insert(0, "(not a git work tree: judged by mtime, so a file git rewrote may be listed)")
     return out
 
 

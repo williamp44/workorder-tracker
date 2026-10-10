@@ -354,6 +354,107 @@ def test_a_command_that_writes_no_python_reports_nothing(tmp_path):
     assert context(run(shell_payload(tmp_path, "ls"))) == ""
 
 
+# --- US-022: judged by git content, not mtime --------------------------------
+# PR 5's author rewrite (a rebase, every tree identical) gave every rewritten
+# file a fresh mtime, and the check reported them all as shell-written.
+
+BAD = "def f(unused):\n    return 1\n"  # ARG001
+OLD = "1000000000 +0000"  # setup happens long before the command being judged
+
+
+def git(repo: Path, *args: str, old: bool = False) -> None:
+    env = dict(os.environ, GIT_AUTHOR_DATE=OLD, GIT_COMMITTER_DATE=OLD) if old else None
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.autocrlf=false",
+                    *args], cwd=repo, check=True, capture_output=True, env=env)
+
+
+def repo_with_committed_bad_file(tmp_path: Path) -> Path:
+    """A git repo whose a.py (with an ARG001) was committed and written long ago."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    shutil.copy(ROOT / "ruff.toml", repo / "ruff.toml")
+    (repo / "a.py").write_text(BAD)
+    git(repo, "init", "-q", "-b", "main", old=True)
+    git(repo, "add", "ruff.toml", "a.py", old=True)
+    git(repo, "commit", "-q", "-m", "setup", old=True)
+    os.utime(repo / "a.py", (1_000_000, 1_000_000))
+    return repo
+
+
+def shell_check(repo: Path, command: str = "the command under test") -> str:
+    return context(run(shell_payload(repo, command)))
+
+
+@pytest.mark.control("pins that a new untracked file is still checked; base checks it by mtime")
+def test_an_untracked_file_written_through_a_shell_is_checked(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    (repo / "new.py").write_text(BAD)
+    ctx = shell_check(repo)
+    assert "new.py" in ctx and "ARG001" in ctx
+
+
+@pytest.mark.control("pins that an uncommitted shell edit is still checked; base checks it by mtime")
+def test_a_tracked_file_changed_through_a_shell_is_checked(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    (repo / "a.py").write_text(BAD + "\n\ndef g(also_unused):\n    return 2\n")
+    assert "ARG001" in shell_check(repo)
+
+
+@pytest.mark.control("pins rule (b): written and committed in one command is still checked")
+def test_a_file_written_and_committed_in_the_same_command_is_checked(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    (repo / "b.py").write_text(BAD)
+    git(repo, "add", "b.py")
+    git(repo, "commit", "-q", "-m", "write and commit")
+    ctx = shell_check(repo, "printf ... > b.py && git add b.py && git commit -m x")
+    assert "b.py" in ctx and "ARG001" in ctx
+
+
+def test_a_rebase_that_rewrites_files_with_identical_content_is_not_reported(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    (repo / "a.py").write_text(BAD + "\n\ndef g(also_unused):\n    return 2\n")
+    git(repo, "commit", "-q", "-am", "second", old=True)
+    os.utime(repo / "a.py", (1_000_000, 1_000_000))
+    # PR 5's shape: rewrite authors over a range, trees identical.
+    git(repo, "rebase", "-q", "HEAD~1", "--exec", "git commit -q --amend --no-edit --author='X <x@y>'")
+    git(repo, "rebase", "-q", "--force-rebase", "HEAD~1")
+    assert (repo / "a.py").stat().st_mtime > 1_000_000, "the fixture must rewrite a.py, or this tests nothing"
+    assert shell_check(repo, "git rebase main --exec 'git commit --amend --author=...'") == ""
+
+
+def test_a_checkout_whose_files_match_the_new_head_is_not_reported(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    git(repo, "checkout", "-q", "-b", "other", old=True)
+    (repo / "a.py").write_text(BAD + "\n\ndef g(also_unused):\n    return 2\n")
+    git(repo, "commit", "-q", "-am", "other", old=True)
+    git(repo, "checkout", "-q", "main", old=True)
+    os.utime(repo / "a.py", (1_000_000, 1_000_000))
+    git(repo, "checkout", "-q", "other")
+    assert shell_check(repo, "git checkout other") == ""
+
+
+@pytest.mark.control("pins that a stash pop leaving the file dirty is checked; base checks it by mtime")
+def test_a_stash_pop_that_leaves_the_file_dirty_is_checked(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    (repo / "a.py").write_text(BAD + "\n\ndef g(also_unused):\n    return 2\n")
+    git(repo, "stash", "-q")
+    git(repo, "stash", "pop", "-q")
+    assert "ARG001" in shell_check(repo, "git stash && git stash pop")
+
+
+def test_touching_a_clean_file_is_not_reported(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    os.utime(repo / "a.py")  # mtime now, content exactly as committed
+    assert shell_check(repo, "touch a.py") == ""
+
+
+def test_outside_a_git_work_tree_the_check_falls_back_to_mtime_and_says_so(tmp_path):
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    (tmp_path / "bad.py").write_text(BAD)
+    ctx = shell_check(tmp_path)
+    assert "ARG001" in ctx and "not a git work tree: judged by mtime" in ctx
+
+
 # --- robustness: reports, never blocks ------------------------------------
 
 def test_unparseable_input_exits_0_and_says_so():

@@ -335,6 +335,18 @@ MUTANTS = (
         "    written = []\n",
     ),
     Mutant(
+        "shell-check-ignores-git-state",
+        ".claude/hooks/diagnostic_scan.py",
+        "    return [f for f in files if f.resolve() in keep], True\n",
+        "    return files, True\n",
+    ),
+    Mutant(
+        "shell-check-misses-same-command-commit",
+        ".claude/hooks/diagnostic_scan.py",
+        "    keep = dirty | committed\n",
+        "    keep = dirty\n",
+    ),
+    Mutant(
         "commit-gated-on-filter-allowed",
         ".claude/hooks/guard_git.py",
         "if gate and is_commit_or_push(segment, cwd):",
