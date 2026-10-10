@@ -636,3 +636,44 @@ STATUS: US-019 [x] VERIFIED
 Also: the two reviewer-agent assessments are saved to docs/evidence/harness_value_assessment_2026-10-10.md.
 guard_git.py is now 362 lines (R2-2; Decision 3: accept the growth).
 <review-passed/>
+
+## Sprint 5: the last open items, probed (2026-10-10, eacaf59)
+Each open item was probed before deciding whether it is worth a task. Raw outputs are in
+docs/evidence/harness_probes_2026-10-09.md, "Open-items probes, 2026-10-10"; verdicts and
+tasks are in the PRD, "Sprint 5".
+Yardstick: every shell command in all 6 agent transcripts for this repo (347 commands).
+
+R1-1 (python3 warning): the SessionStart command, run with only the REAL Windows Store stub on PATH
+    python3.exe -> .../AppInstallerPythonRedirector.exe
+    python3 -c 1 -> "Python was not found; run without arguments to install from the Microsoft Store..." exit 49
+    SessionStart command -> {"systemMessage": "Hooks are NOT running: python3 does not start Python 3.11+ here..."} exit 0
+    normal PATH -> (no output) exit 0
+  VERIFIED at the command level. Not observed: Claude Code displaying it at a real session start
+  (the scripted stub session was stopped by the person). -> US-020, a person, ~2 min.
+
+R3-2 (remaining bypasses): 39 open rows re-run through the live guard_git -> 38 still open.
+  (The 1 DENY, Push-Location, is incidental: `../f.txt` leaves the repo, git status fails, and the
+  guard fails closed.)
+  Real use across 347 commands: 0 honest uses of any open form to destroy work. Every other hit was
+  probe data inside heredocs. The only real hits were 2 x `git worktree remove --force` of a throwaway
+  worktree, which were legitimate.
+  -> CLOSED as stated limits. Not worth fixing: adversary-only; refusing some would block legitimate work.
+
+US-015 Steps 1-2: `2>&1 | tail/head/grep` (heredocs excluded) = 58 of 349 commands (53 of 267 in
+  this PRD's session). The costly form, filter then `&& git commit`, appeared 10 times for real and is
+  now refused by US-014. No defect has been traced to a discarded diagnostic.
+  -> US-021, a person decides. Recommended: close as "not built".
+
+R2-2 (guard_git 362 lines): it reads top to bottom; 85 tests collected in test_guard_git.py; 14
+  guard_git mutants. -> FROZEN, no split.
+
+CI: origin exists; harness-hardening has no upstream (never pushed); gh is not installed; gate files
+  vs main: 9 files, +910/-117; the new tests touch os.name only through pure functions.
+  -> H-1, a person: review, push, open a PR, record the CI run.
+
+Correction: three numbers in my first draft of the PRD's Sprint 5 were typed, not measured (107 tests,
+17 mutants, 186 new tests). Measured: 85, 14 and 185. Corrected before commit eacaf59, each with its
+command alongside.
+
+STATUS: Sprint 5 probes VERIFIED. No build work remains for the agent; US-020, US-021 and H-1 are
+person-only.
