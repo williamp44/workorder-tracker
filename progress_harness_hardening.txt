@@ -295,3 +295,30 @@ Full gate run (after the fix):
     pytest 292 passed | check_red: 48 new, 11 controls, OK all 37 new RED
     mutation (re-run with the new mutant): OK 35 of 35 killed
 STATUS: US-005 [x] VERIFIED
+
+## US-006 guard_git discard forms
+RED (temp repos: `dirty` = sub/x.txt dirty, u.txt untracked, alias.aa = add -A; `clean` = on main, nothing to lose):
+    FAILED test_us006_refuses_on_a_dirty_tree[...] for all 17 rows: git checkout sub/x.txt |
+      git checkout . | git checkout HEAD sub/x.txt | git checkout -f | git checkout --force main |
+      git switch --discard-changes main | git switch -f main | git reset --hard |
+      git reset --hard HEAD~1 | git clean -fd | git clean -fdx | git stash drop | git stash clear |
+      cd sub && git checkout -- x.txt | cd sub && git restore x.txt |
+      Set-Location sub; git restore x.txt (row added: PowerShell cd) | git aa
+    FAILED test_us006_restoring_only_the_index_is_allowed   (the false positive)
+    18 failed, 6 passed (the clean-tree and clean-file allow rows, @control)
+Implementation as the PRD specifies. Additions, in depth:
+  - Set-Location/sl/chdir/pushd are tracked like cd.
+  - `clean -x/-X` also counts ignored files (status --ignored): -x deletes them.
+  - Shell aliases (`!cmd`) are not expanded: a stated limit.
+Concern noted, NOT acted on: the PRD denies `stash drop/clear` only when the
+worktree is dirty. A stash is uncommitted work whatever the worktree's
+state; denying it always may be the better rule. Proposal for a person.
+check_fp caught CHECKS as a mutable dict -> MappingProxyType.
+guard_git.py is now 335 lines; the S2 review handles the split.
+Full gate run:
+    ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 322 passed | check_red: 78 new, 20 controls, OK all 58 new RED
+    mutation: OK 40 of 40 killed (git-hook-allows-checkout-without-dashdash,
+      git-hook-allows-reset-hard, git-hook-ignores-cd, git-hook-ignores-repo-aliases,
+      git-hook-denies-index-only-restore: all exit 1)
+STATUS: US-006 [x] VERIFIED

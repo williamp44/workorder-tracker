@@ -89,3 +89,83 @@ def test_us005_refuses(repo, command):
 ])
 def test_us005_allows(repo, command):
     assert not denied(repo, command)
+
+
+# --- US-006: every discard form, cwd drift, aliases, --staged -----------------
+
+@pytest.fixture(scope="module")
+def dirty(tmp_path_factory) -> Path:
+    """sub/x.txt committed then made dirty; f.txt committed and clean; u.txt
+    untracked; a repo-local alias aa = add -A."""
+    root = tmp_path_factory.mktemp("dirty")
+    git(root, "init", "-q")
+    git(root, "config", "user.email", "p@p")
+    git(root, "config", "user.name", "p")
+    (root / "sub").mkdir()
+    (root / "f.txt").write_text("a")
+    (root / "sub" / "x.txt").write_text("a")
+    git(root, "add", "f.txt", "sub/x.txt")
+    git(root, "commit", "-q", "-m", "init")
+    git(root, "config", "alias.aa", "add -A")
+    (root / "sub" / "x.txt").write_text("DIRTY")
+    (root / "u.txt").write_text("untracked")
+    return root
+
+
+@pytest.fixture(scope="module")
+def clean(tmp_path_factory) -> Path:
+    """Everything committed on branch main; nothing untracked."""
+    root = tmp_path_factory.mktemp("clean")
+    git(root, "init", "-q")
+    git(root, "symbolic-ref", "HEAD", "refs/heads/main")
+    git(root, "config", "user.email", "p@p")
+    git(root, "config", "user.name", "p")
+    (root / "f.txt").write_text("a")
+    git(root, "add", "f.txt")
+    git(root, "commit", "-q", "-m", "init")
+    return root
+
+
+@pytest.mark.parametrize("command", [
+    "git checkout sub/x.txt",
+    "git checkout .",
+    "git checkout HEAD sub/x.txt",
+    "git checkout -f",
+    "git checkout --force main",
+    "git switch --discard-changes main",
+    "git switch -f main",
+    "git reset --hard",
+    "git reset --hard HEAD~1",
+    "git clean -fd",
+    "git clean -fdx",
+    "git stash drop",
+    "git stash clear",
+    "cd sub && git checkout -- x.txt",
+    "cd sub && git restore x.txt",
+    "Set-Location sub; git restore x.txt",
+    "git aa",
+])
+def test_us006_refuses_on_a_dirty_tree(dirty, command):
+    assert denied(dirty, command)
+
+
+def test_us006_restoring_only_the_index_is_allowed(dirty):
+    # Index only; the worktree copy is untouched. A false deny on the base.
+    assert not denied(dirty, "git restore --staged sub/x.txt")
+
+
+@pytest.mark.control("pins the US-006 allow rows that need no change; base allows them")
+@pytest.mark.parametrize("command", [
+    "git checkout main",
+    "git checkout -b new",
+    "git switch main",
+    "git reset --hard",
+    "git clean -fd",
+])
+def test_us006_allows_on_a_clean_tree(clean, command):
+    assert not denied(clean, command)
+
+
+@pytest.mark.control("pins that a checkout of a clean file stays allowed; base allows it")
+def test_us006_allows_restoring_a_clean_file(dirty):
+    assert not denied(dirty, "git checkout -- f.txt")

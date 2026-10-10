@@ -245,6 +245,36 @@ MUTANTS = (
         "subshells(line)",
     ),
     Mutant(
+        "git-hook-allows-checkout-without-dashdash",
+        ".claude/hooks/guard_git.py",
+        'paths = [p for p in candidates if p == "." or os.path.exists(os.path.join(cwd, p))]',
+        "paths = []",
+    ),
+    Mutant(
+        "git-hook-allows-reset-hard",
+        ".claude/hooks/guard_git.py",
+        '"reset": "--hard" in args,',
+        '"reset": False,',
+    ),
+    Mutant(
+        "git-hook-ignores-cd",
+        ".claude/hooks/guard_git.py",
+        "cwd = os.path.join(cwd, target[0])  # later commands in this line run there",
+        "pass",
+    ),
+    Mutant(
+        "git-hook-ignores-repo-aliases",
+        ".claude/hooks/guard_git.py",
+        "w = expand_alias(w, git_cwd)",
+        "pass",
+    ),
+    Mutant(
+        "git-hook-denies-index-only-restore",
+        ".claude/hooks/guard_git.py",
+        "if staged and not worktree:",
+        "if False:",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'or any("A" in a[1:] or "u" in a[1:] for a in short)):',
