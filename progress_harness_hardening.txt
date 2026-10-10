@@ -515,3 +515,42 @@ Acceptance grep:
     docs/CHECKS.md:113:  ... 174 passed in 3.92s ...   (same, MariaDB leg)
   Nothing stale: both are the dated record of that CI run, not current claims.
 STATUS: US-010 [x] (docs; numbers pasted from commands)
+
+## US-REVIEW-S3 Final Review
+1. Full gates, clean worktrees, GATE_EDIT unset:
+   @20299bb (US-010): pytest 362 passed | check_red 151 new, 34 controls, OK all 117 RED | mutation 47 of 47
+   @7731a7b (R3-1, final HEAD):
+     ruff All checks passed! | check_types INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics
+     check_fp 0 finding(s) | pytest 364 passed in 25.58s
+     check_red: 153 new test(s), 34 declared control(s); OK all 119 new test(s) were RED on the base code
+     mutation: OK control passed, equivalent canary survived, 48 of 48 mutants killed
+2. Probe matrices: see the evidence file's AFTER section. gates 0; guard_git 1 + 1, both explained.
+3. Live, in a FRESH session (`claude -p --model haiku`, stream-json; scratchpad/live_rs3.jsonl):
+     SessionStart hook_response: exit_code 0, output ""   (R1-1 check fired; silent because python3 works)
+     PowerShell `git add -A --dry-run` -> "PreToolUse:PowerShell hook error: `git add -A` / `--all` / `-u` stages everything ..."
+     PowerShell `Write-Output "WARN live-probe"` -> context "L1 WARN live-probe ^ a tool logged a warning"
+     Bash `echo "WARN live"; exit 3` -> "the command FAILED (exit 3). Its output was scanned too: ..."
+     PowerShell `Write-Output "WARN live"; exit 3` -> the same
+   FOUND: headless payloads have no scratchpad_dir, so every call alarmed
+   "keys gone: scratchpad_dir". Fixed as R3-1 (7731a7b): RED test, then
+   OPTIONAL_TOP_LEVEL_KEYS, then mutant contract-alarms-on-headless-sessions.
+4. Fresh-reviewer angle (an agent piping payloads into the hooks against
+   throwaway repos at 20299bb). Every hit is recorded in the evidence file,
+   section "US-REVIEW-S3: fresh-reviewer probe", as a new probe row or a
+   stated limit. Summary: about 30 new guard_git rows (abbreviated long options,
+   -qf clusters, pathspec magic without --, plumbing such as read-tree,
+   checkout-index, apply -R, rm -f and worktree remove --force; wrapper
+   prefixes time/nice/nohup/timeout/xargs/VAR=; ( ) { } ! & then/do; bash
+   backslash-newline; -c aliases; missing global options), gated-commit gaps
+   (FILTERS incomplete; `set +o pipefail` counts as on), and guard_gates gaps
+   (.. segments, trailing dot/space, ::$DATA, NotebookEdit carrying both
+   keys, and unlisted files that can weaken a gate: pytest.ini, other
+   conftest.py, .ruff.toml, tools/__init__.py, .git/config, .git/hooks).
+   NONE fixed in this PRD: it is a new body of work.
+<review-issues-found/>
+  - R3-1 FIXED (7731a7b).
+  - R3-2 The fresh-reviewer hits (evidence file). Proposal: a follow-up PRD with
+    the rows as its RED tables. The guard_gates scope additions are a person's decision.
+  - Still open from earlier reviews: R2-1 (US-015 Steps 1-2 blocked), R2-2 (guard_git
+    size), R2-3 (stale .pyc), R1-1 live firing on a machine WITHOUT python3 (not run).
+  - CI not run: the branch has not been pushed. A person pushes it.
