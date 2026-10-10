@@ -29,8 +29,7 @@ TWO SCANS.
      docs say, see extract_output): high-precision toolchain diagnostics.
   2. COMMAND (`tool_input.command`): hazards that let a command appear to
      succeed while hiding or skipping something, which no output pattern can
-     see. A heredoc body carrying backslashes, and stderr merged into stdout
-     and then cut down with tail or head.
+     see: a heredoc body carrying backslashes.
 
 PRECISION OVER RECALL. A guard that fires on a passing run teaches the reader
 to ignore it, recreating the defect one level up. Bare `fail` is not a
@@ -87,13 +86,12 @@ COMMAND_HAZARDS = (
      "patch script aborts before writing and the surrounding command still "
      "prints a plausible success. Confirm the file actually changed before "
      "believing it; prefer the Write/Edit tools for source."),
-    ("stderr_merged_then_truncated",
-     "this command merges stderr into stdout (2>&1) and then keeps only part of "
-     "it with tail or head. Diagnostics print FIRST, at the top; the summary "
-     "prints last. This is exactly how a pyrefly WARN saying the hooks were "
-     "never checked was thrown away in this repo. Read the whole output, or "
-     "drop the truncation."),
 )
+# Retired (US-015 Step 3): `stderr_merged_then_truncated`, a warning on
+# `2>&1 | tail/head`. Measured over one run: 7 warned uses, 0 behaviour
+# changes, and 17 `2>&1 | grep` uses it never saw. A warning that is read
+# past teaches the reader to ignore hooks. The part that mattered, a commit
+# gated on the filter's exit status, is refused by guard_git (US-014).
 
 # The operator's own verdict lines. Checked FIRST; a match suppresses the line.
 BENIGN = (
@@ -188,7 +186,6 @@ def check_contract(data: dict) -> list[str]:
 
 
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
-MERGED_THEN_CUT = re.compile(r"2>&1\s*\|\s*(?:tail|head)\b(?!\s+-[fF]\b)")
 
 
 def heredoc_bodies(cmd: str):
@@ -207,8 +204,6 @@ def scan_command(cmd: str) -> list[str]:
     hits = []
     if any("\\" in body for body in heredoc_bodies(cmd)):
         hits.append("heredoc_backslash")
-    if MERGED_THEN_CUT.search(cmd):
-        hits.append("stderr_merged_then_truncated")
     return hits
 
 

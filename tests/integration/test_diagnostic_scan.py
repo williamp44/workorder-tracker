@@ -123,12 +123,14 @@ def test_stays_quiet_on_a_verdict_or_clean_run(label):
 HAZARDS = MappingProxyType({
     "a heredoc body with an escaped backslash": ("python3 - <<'PY'\ns = '" + BS + BS + "'\nPY", "heredoc"),
     "a heredoc body with a docstring continuation": ('cat > t.py <<"EOF"\nx = """' + BS + "\nEOF", "heredoc"),
-    # The incident in this repo, verbatim.
-    "stderr merged, then all but the last line dropped": (".venv/bin/pyrefly check 2>&1 | tail -1", "tail"),
-    "stderr merged, then head": ("ruff check . 2>&1 | head -5", "tail"),
 })
 
 QUIET_COMMANDS = MappingProxyType({
+    # US-015 Step 3: the truncation warning was retired. Measured: 7 warned
+    # uses, 0 behaviour changes, 17 `| grep` uses it never saw. US-014's
+    # refusal holds the part that mattered (a commit gated on a filter).
+    "stderr merged, then all but the last line dropped": ".venv/bin/pyrefly check 2>&1 | tail -1",
+    "stderr merged, then head": "ruff check . 2>&1 | head -5",
     "a heredoc with no backslash in its body": "cat > notes.md <<'EOF'\n- plain text\nEOF",
     "backslashes in a path but no heredoc": "ls C:" + BS + "dev" + BS + "clojure",
     "truncation without merged stderr: a warning still shows": "pytest -q | tail -1",
