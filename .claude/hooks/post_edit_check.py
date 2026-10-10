@@ -6,30 +6,47 @@ builds anything else on top. It is the same ruff and pyrefly configuration
 CI gates on, so the agent sees in the turn exactly what CI would refuse.
 
 It never blocks the edit (the edit has already happened). It reports.
+
+THE INTERPRETER. The hook is launched by whatever `python3` is on PATH, which
+need not have ruff, pyrefly or the project's deps. So it runs the checks with
+the project venv's python, found by OS (F2), and tells pyrefly that python
+explicitly: left to itself, pyrefly asks the first python on PATH for
+site-packages and reports false missing-import errors (F3). With no venv, it
+says the in-turn layer is off, rather than going quiet.
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
-def _run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([sys.executable, "-m", *args], cwd=cwd,
+def venv_python(root: Path, os_name: str) -> Path:
+    """The project venv's interpreter, where `python -m venv .venv` puts it on that OS."""
+    if os_name == "nt":
+        return root / ".venv" / "Scripts" / "python.exe"
+    return root / ".venv" / "bin" / "python"
+
+
+def _run(python: str, args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run([python, "-m", *args], cwd=cwd,
                           capture_output=True, text=True, timeout=60)
 
 
-def findings(path: Path, root: Path) -> list[str]:
-    """Problems in one edited file; [] if clean or not Python."""
+def findings(path: Path, root: Path, python: str = sys.executable) -> list[str]:
+    """Problems in one edited file; [] if clean or not Python. `python` must
+    have ruff, pyrefly and the project's deps installed."""
     if path.suffix != ".py" or not path.exists():
         return []
     out = []
-    lint = _run(["ruff", "check", "--output-format", "concise", "--quiet", str(path)], root)
+    lint = _run(python, ["ruff", "check", "--output-format", "concise", "--quiet", str(path)], root)
     if lint.returncode not in (0, 1):
         out.append(f"ruff could not run (exit {lint.returncode}): {lint.stderr.strip()[:200]}")
     out += [ln for ln in lint.stdout.splitlines() if ln.strip()]
     if root in path.resolve().parents:
-        types = _run(["pyrefly", "check", "--preset", "default", str(path)], root)
+        types = _run(python, ["pyrefly", "check", "--preset", "default",
+                              "--python-interpreter-path", python, str(path)], root)
         out += [ln for ln in types.stdout.splitlines() if ln.startswith("ERROR")]
     return out
 
@@ -42,9 +59,14 @@ def main() -> int:
         return 1  # non-blocking error, shown to the user
     root = Path(data.get("cwd") or ".").resolve()
     file_path = (data.get("tool_input") or {}).get("file_path")
-    if not file_path:
+    if not file_path or Path(file_path).suffix != ".py":
         return 0
-    problems = findings(Path(file_path), root)
+    python = venv_python(root, os.name)
+    if not python.exists():
+        print(f"in-turn checks are NOT running: no venv at {python.parent.parent}. "
+              f"Create it (PRD P-2).", file=sys.stderr)
+        return 2
+    problems = findings(Path(file_path), root, str(python))
     if problems:
         print("Checks found problems in the file you just edited:", file=sys.stderr)
         print("\n".join(problems), file=sys.stderr)

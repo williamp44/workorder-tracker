@@ -185,6 +185,18 @@ MUTANTS = (
         '("Write", "Edit", "MultiEdit")',
     ),
     Mutant(
+        "post-edit-drops-interpreter-path",
+        ".claude/hooks/post_edit_check.py",
+        '"--python-interpreter-path", python, ',
+        "",
+    ),
+    Mutant(
+        "check-types-drops-interpreter-path",
+        "tools/check_types.py",
+        ',\n           "--python-interpreter-path", sys.executable)',
+        ")",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'if any(a in ("-A", "--all", "-u", "--update") for a in args):',

@@ -65,3 +65,56 @@ Full gate run (GATE_EDIT=1 in env):
     mutation_check: OK   control passed, equivalent canary survived, 25 of 25 mutants killed
       (shell-hooks-skip-powershell exit 1, gate-hook-skips-notebooks exit 1)
 STATUS: US-001 [x] VERIFIED
+
+## US-002 post_edit_check runs on Windows and POSIX, silent on a clean file
+ORACLE CORRECTED (the PRD said: if not RED on main, stop and record why).
+As specified (VIRTUAL_ENV removed, PATH = an empty dir), the clean-file test
+and the check_types test PASSED on the base: 2 passed. Why: pyrefly
+auto-detects an in-repo .venv.
+    pyrefly dump-config app/services.py -> Using interpreter: C:\dev\workorder-tracker\.venv\Scripts\python.exe
+F3 was probed from a scratch venv OUTSIDE the repo. The oracle now
+reproduces those conditions: a copy of the repo with no .venv (as in CI and
+in mutation copies), plus a bare `python -m venv --without-pip` first on PATH.
+Portable to Linux. A person should review this change of oracle.
+
+RED (before the code change):
+    FAILED test_check_types.py::test_the_project_type_checks_clean_whatever_python_is_on_path
+      AssertionError: ERROR Cannot find module `sqlalchemy` [missing-import] ... (40+ lines)
+      Site package path queried from interpreter: [...scoop\apps\python\current...]
+    FAILED test_hooks.py::test_post_edit_check_finds_the_venv_python_for_each_os
+      AttributeError: module 'post_edit_check' has no attribute 'venv_python'
+    FAILED test_hooks.py::test_post_edit_check_is_silent_on_a_clean_file_whatever_python_is_on_path
+    FAILED test_hooks.py::test_post_edit_check_says_the_layer_is_off_when_there_is_no_venv
+      AssertionError: assert 0 == 2
+    4 failed, 39 deselected
+
+Design note (in depth, not breadth): findings() takes the interpreter as a
+parameter (default sys.executable). main() resolves venv_python(root, os.name),
+exits 2 if it is missing, and passes it in. If findings() required root/.venv
+itself, CI (pip install into the runner's python, no .venv) and every
+mutation copy (.venv skipped) would fail. The no-venv exit applies to .py
+edits only; other edits stay silent, as before.
+
+Live (this session, hooks re-read without a restart):
+- Write scratch_live_probe.py with `x: int = "s"` ->
+    PostToolUse:Write hook blocking error from command: "python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/post_edit_check.py"":
+    Checks found problems in the file you just edited:
+    ERROR `Literal['s']` is not assignable to `int` [bad-assignment]
+- Rewrote it as `x: int = 1` -> no hook output. The file was deleted after.
+- While building the oracle, diagnostic_scan stayed silent on 40+ pyrefly
+  `ERROR Cannot find module` lines in pytest output: F8, seen again live.
+
+Full gate run (VIRTUAL_ENV unset, GATE_EDIT=1):
+    ruff: FAILED first: F401 `os` imported but unused (tests/integration/test_check_types.py).
+          It was edited through a Bash python script, so post_edit_check never saw it.
+          Fixed through Edit -> `ruff check .`: All checks passed!
+    check_types (VIRTUAL_ENV unset): INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics; exit=0
+    check_fp: 0 finding(s)
+    pytest: 238 passed in 10.16s
+    check_red --base main: 17 new test(s), 7 declared control(s)
+                           OK   all 10 new test(s) were RED on the base code
+    mutation_check: OK   control passed, equivalent canary survived, 27 of 27 mutants killed
+      (post-edit-drops-interpreter-path exit 1, check-types-drops-interpreter-path exit 1)
+    pytest and mutation were NOT re-run after the F401 fix: it removed one
+    unused import. test_check_types.py re-run: 3 passed.
+STATUS: US-002 [x] VERIFIED

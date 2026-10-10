@@ -7,6 +7,7 @@ through its pure functions or its stdin/stdout contract.
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +17,20 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 HOOKS = ROOT / ".claude" / "hooks"
+
+
+def bare_python_first_on_path(tmp_path: Path) -> tuple[Path, dict[str, str]]:
+    """A copy of the project with no .venv in it, and an env whose first python
+    has none of the project's deps: the conditions F3 was found under."""
+    tree = tmp_path / "repo"
+    shutil.copytree(ROOT, tree, ignore=shutil.ignore_patterns(
+        ".git", ".venv", "__pycache__", ".pytest_cache", "*.db"))
+    bare = tmp_path / "bare"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(bare)], check=True)
+    bindir = bare / ("Scripts" if os.name == "nt" else "bin")
+    env = {k: v for k, v in os.environ.items() if k.upper() not in ("VIRTUAL_ENV", "PATH")}
+    env["PATH"] = os.pathsep.join([str(bindir), os.environ.get("PATH", "")])
+    return tree, env
 
 
 def load(name: str):
@@ -186,6 +201,37 @@ def test_post_edit_check_is_silent_on_a_clean_file(tmp_path):
     good = tmp_path / "good.py"
     good.write_text("def f(x: int) -> int:\n    return x\n")
     assert load("post_edit_check").findings(good, ROOT) == []
+
+
+def test_post_edit_check_finds_the_venv_python_for_each_os():
+    venv_python = load("post_edit_check").venv_python
+    assert venv_python(Path("r"), "nt") == Path("r") / ".venv" / "Scripts" / "python.exe"
+    assert venv_python(Path("r"), "posix") == Path("r") / ".venv" / "bin" / "python"
+
+
+def test_post_edit_check_is_silent_on_a_clean_file_whatever_python_is_on_path(tmp_path):
+    # F3: pyrefly asked the first python on PATH for site-packages. Without an
+    # in-repo .venv for it to find, a python lacking the deps gave false
+    # missing-import ERRORs on a clean file.
+    tree, env = bare_python_first_on_path(tmp_path)
+    code = ("import json, sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]);"
+            "import post_edit_check as p;"
+            "print(json.dumps(p.findings(Path(sys.argv[2]) / 'app' / 'services.py', Path(sys.argv[2]))))")
+    r = subprocess.run([sys.executable, "-c", code, str(HOOKS), str(tree)], cwd=tree,
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == []
+
+
+def test_post_edit_check_says_the_layer_is_off_when_there_is_no_venv(tmp_path):
+    edited = tmp_path / "edited.py"
+    edited.write_text("x = 1\n")
+    r = subprocess.run(
+        [sys.executable, str(HOOKS / "post_edit_check.py")],
+        input=json.dumps({"cwd": str(tmp_path), "tool_input": {"file_path": str(edited)}}),
+        capture_output=True, text=True)
+    assert r.returncode == 2
+    assert "NOT running" in r.stderr and str(tmp_path / ".venv") in r.stderr
 
 
 def test_post_edit_check_ignores_non_python_files(tmp_path):
