@@ -418,12 +418,12 @@ Skip and mark `[x] SKIPPED (no decision)` unless a person has approved it in `pr
 | Managed-settings hooks (the only scope a project file cannot disable) | Org-level policy, outside this repo. |
 | Run the mutation check in the in-turn hook | ~2-3 min per run; CI is the right place. |
 
-## Open questions (assumption in bold, used if unanswered)
+## Decisions (answered 2026-10-09)
 
-1. Gate-edit mechanism: **Option A (launch-time `GATE_EDIT=1`)**, or B, patch-out.
-2. Execution: **ralph loop, unattended**, or in-session, task by task.
-3. US-009 gate-drift reporter: **skip**, or build.
-4. Gate `tests/spec.py`: **no**.
+1. Gate-edit mechanism: **Option A, launch-time `GATE_EDIT=1`.**
+2. Execution: **in-session, task by task.** The session that runs US-001 onward must be launched with `GATE_EDIT=1` after a person applies P-1.
+3. US-009 gate-drift reporter: **skip.** The loop marks it `[x] SKIPPED (decided 2026-10-09)`.
+4. Gate `tests/spec.py`: **no.**
 
 ## Post-Build Verification
 
