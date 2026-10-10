@@ -275,6 +275,18 @@ MUTANTS = (
         "if False:",
     ),
     Mutant(
+        "git-hook-crash-fails-open",
+        ".claude/hooks/guard_git.py",
+        "    try:\n        judge_payload()\n    except Exception as exc:\n        refuse_crash(exc)\n",
+        "    judge_payload()\n",
+    ),
+    Mutant(
+        "gate-hook-crash-blocks-override",
+        ".claude/hooks/guard_gates.py",
+        'if os.environ.get(OVERRIDE, "") == "1":',
+        "if False:",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'or any("A" in a[1:] or "u" in a[1:] for a in short)):',

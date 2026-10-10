@@ -33,8 +33,31 @@ import os
 import sys
 from pathlib import PurePath
 
+OVERRIDE = "GATE_EDIT"
+
+
+def refuse_crash(exc: BaseException) -> None:
+    """A crashed PreToolUse hook exits 1, which lets the edit through, silently
+    (US-011). So a crash refuses. Under the launch override it lets the edit
+    through and SAYS so instead: refusing then would leave the agent unable to
+    repair the hook it just broke. Inline, not guard_shared: that import may be
+    what failed."""
+    what = f"guard_gates crashed ({type(exc).__name__}: {exc})"
+    if os.environ.get(OVERRIDE, "") == "1":
+        decision = {"additionalContext": (f"{what}; edit allowed by {OVERRIDE}=1 so the hook "
+                                          f"can be repaired. A person must review this change.")}
+    else:
+        decision = {"permissionDecision": "deny",
+                    "permissionDecisionReason": f"{what}: refusing rather than guessing."}
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", **decision}}))
+
+
 sys.path.insert(0, str(PurePath(__file__).parent))
-import guard_shared
+try:
+    import guard_shared
+except Exception as import_error:  # a half-edited sibling must not switch this guard off
+    refuse_crash(import_error)
+    sys.exit(0)
 
 GATES = (
     (".claude", "hooks"),
@@ -51,7 +74,6 @@ GATES = (
     ("tools", "isolation.py"),
     ("tests", "conftest.py"),  # enforces the control-test reason
 )
-OVERRIDE = "GATE_EDIT"
 
 
 def edit_allowed(path: str | None) -> tuple[bool, str]:
@@ -81,6 +103,14 @@ def announce(path: str) -> None:
 
 
 def main() -> int:
+    try:
+        return judge_payload()
+    except Exception as exc:
+        refuse_crash(exc)
+        return 0
+
+
+def judge_payload() -> int:
     raw = sys.stdin.read()
     try:
         data = json.loads(raw or "{}")

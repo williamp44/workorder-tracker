@@ -33,15 +33,34 @@ STATED LIMITS, NOT PARSED: `eval`, scripts, `Start-Process git -ArgumentList
 not a shell parser.
 """
 
+import json
 import os
 import re
 import subprocess
 import sys
 from types import MappingProxyType
 
+
+def refuse_crash(exc: BaseException) -> None:
+    """A crashed PreToolUse hook exits 1, which lets the call through. So a
+    crash refuses instead (US-011). Inline, not guard_shared.deny: the import
+    of guard_shared may be what failed. Edit is not judged here, so the
+    agent can still repair the hook."""
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": (f"guard_git crashed ({type(exc).__name__}: {exc}): refusing "
+                                     f"rather than guessing. Fix the hook through Edit."),
+    }}))
+
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import guard_shared
-from guard_shared import CD, SHELLS, program, shell_script, short_flags, subshells, unwrap, words
+try:
+    import guard_shared
+    from guard_shared import CD, SHELLS, program, shell_script, short_flags, subshells, unwrap, words
+except Exception as import_error:  # a half-edited sibling must not switch this guard off
+    refuse_crash(import_error)
+    sys.exit(0)
 
 # git's global options that take a value as the next word, and those that do not.
 GIT_OPTS_WITH_VALUE = ("-C", "-c", "--git-dir", "--work-tree", "--namespace")
@@ -248,16 +267,23 @@ def judge(line: str, cwd: str, depth: int = 0) -> None:
             CHECKS[w[1]](w, git_cwd)
 
 
-def main() -> int:
+def judge_payload() -> None:
     data, why = guard_shared.payload(sys.stdin)
     if why or data is None:
-        return 0  # not a payload this hook can judge; allowed, and distinguishable
+        return  # not a payload this hook can judge; allowed, and distinguishable
     line = (data.get("tool_input") or {}).get("command") or ""
     cwd = data.get("cwd") or os.getcwd()
     try:
         judge(line, cwd)
     except Denied as exc:
         guard_shared.deny(str(exc))
+
+
+def main() -> int:
+    try:
+        judge_payload()
+    except Exception as exc:
+        refuse_crash(exc)
     return 0
 
 

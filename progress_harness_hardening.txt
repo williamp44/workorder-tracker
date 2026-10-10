@@ -322,3 +322,40 @@ Full gate run:
       git-hook-allows-reset-hard, git-hook-ignores-cd, git-hook-ignores-repo-aliases,
       git-hook-denies-index-only-restore: all exit 1)
 STATUS: US-006 [x] VERIFIED
+
+## CORRECTION (found during US-011): check_red judges the committed HEAD, not the worktree
+tools/check_red.py checks out --head (default HEAD). Each "check_red" line
+recorded above was run BEFORE that task's commit, so it covered the earlier
+commits' tests, not the task's own. Evidence: "107 new test(s)" both before
+and after US-011's tests were added to the worktree.
+What still holds: the run at f3ac13a (after US-006 and the refactor) says
+    107 new test(s), 26 declared control(s)
+    OK   all 81 new test(s) were RED on the base code
+It covers every test added from aff6f44 to d16129a, so none of those
+tests was green on the base. Only the per-task attribution was wrong.
+From US-011 on: commit, then run check_red on that commit, then record it.
+(The PR-level gate in CI checks the branch head, so CI was never affected.)
+
+## US-011 A crashing PreToolUse hook refuses, not allows
+RED (copied hooks in tmp_path, broken guard_shared):
+    FAILED test_a_crashing_git_guard_refuses_and_names_the_crash[NameError]
+    FAILED test_a_crashing_git_guard_refuses_and_names_the_crash[SyntaxError]
+    FAILED test_a_crashing_gate_guard_refuses_without_the_override
+    FAILED test_a_crashing_gate_guard_lets_the_override_repair_it_and_says_so
+      AssertionError: Traceback (most recent call last): ... assert 1 == 0   (the hook exited 1: fails open)
+    4 failed
+Implementation: both guards import guard_shared inside try. On failure they
+print an inline json.dumps decision and sys.exit(0) (exiting keeps the names
+bound for pyrefly). main() wraps judge_payload(). guard_git denies, naming
+the exception. guard_gates denies, or under GATE_EDIT=1 lets the edit through
+with additionalContext naming the crash, so a broken hook can be repaired.
+The crash path reads os.environ.get(OVERRIDE, ""), so the existing mutant
+gate-override-accepts-any-value still matches exactly once.
+Live: only in scratch copies (the tests run the real hooks copied to
+tmp_path); the live hooks were never broken for this.
+Full gate run (worktree):
+    ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 328 passed
+    mutation: OK 42 of 42 killed (git-hook-crash-fails-open, gate-hook-crash-blocks-override exit 1)
+    check_red: run AFTER this commit, recorded with US-012.
+STATUS: US-011 [x] VERIFIED (check_red pending, next entry)

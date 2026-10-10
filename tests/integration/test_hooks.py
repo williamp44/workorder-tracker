@@ -175,6 +175,59 @@ def test_the_override_does_not_wave_through_a_payload_with_no_path():
     assert denied(run_gates_launched_with("1", {"tool_name": "Edit", "tool_input": {}}))
 
 
+# --- a crashing guard refuses, it does not allow (US-011) -------------------
+# A PreToolUse hook that exits 1 is a non-blocking error: the call goes ahead.
+# A half-edited guard_shared crashed every guard that way during this PRD.
+
+BROKEN = MappingProxyType({
+    # call time: the module imports, then a function it exports fails
+    "NameError": "\n\ndef commands(line):\n    return _not_defined_anywhere(line)\n",
+    # import time: the module cannot be imported at all
+    "SyntaxError": "\n\ndef broken(:\n",
+})
+
+
+def hooks_with_broken_shared(tmp_path: Path, kind: str) -> Path:
+    hooks = tmp_path / "hooks"
+    shutil.copytree(HOOKS, hooks, ignore=shutil.ignore_patterns("__pycache__", ".fired.log"))
+    shared = hooks / "guard_shared.py"
+    shared.write_text(shared.read_text(encoding="utf-8") + BROKEN[kind], encoding="utf-8")
+    return hooks
+
+
+def run_copied(hooks: Path, name: str, payload: dict, gate_edit: str | None = None) -> dict | None:
+    env = {k: v for k, v in os.environ.items() if k != "GATE_EDIT"}
+    if gate_edit is not None:
+        env["GATE_EDIT"] = gate_edit
+    r = subprocess.run([sys.executable, str(hooks / f"{name}.py")], input=json.dumps(payload),
+                       capture_output=True, text=True, cwd=ROOT, env=env)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout) if r.stdout.strip() else None
+
+
+@pytest.mark.parametrize("kind", ["NameError", "SyntaxError"])
+def test_a_crashing_git_guard_refuses_and_names_the_crash(tmp_path, kind):
+    decision = run_copied(hooks_with_broken_shared(tmp_path, kind), "guard_git",
+                          {"tool_name": "Bash", "tool_input": {"command": "git status"}, "cwd": str(ROOT)})
+    assert denied(decision)
+    assert decision is not None and kind in decision["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_a_crashing_gate_guard_refuses_without_the_override(tmp_path):
+    decision = run_copied(hooks_with_broken_shared(tmp_path, "SyntaxError"), "guard_gates",
+                          dict(GATE_EDIT_PAYLOAD))
+    assert denied(decision)
+    assert decision is not None and "SyntaxError" in decision["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_a_crashing_gate_guard_lets_the_override_repair_it_and_says_so(tmp_path):
+    # Otherwise the agent could not repair the hook it just broke (ssi guard_tdd deadlock).
+    decision = run_copied(hooks_with_broken_shared(tmp_path, "SyntaxError"), "guard_gates",
+                          dict(GATE_EDIT_PAYLOAD), gate_edit="1")
+    assert not denied(decision)
+    assert decision is not None and "crashed" in decision["hookSpecificOutput"]["additionalContext"]
+
+
 # --- guard_git: commands that quietly destroy work -------------------------
 
 @pytest.mark.parametrize("command", [
