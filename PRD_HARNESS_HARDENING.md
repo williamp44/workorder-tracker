@@ -588,3 +588,169 @@ Skip and mark `[x] SKIPPED (no decision)` unless a person has approved it in `pr
 - [ ] Live: PowerShell `git add -A` denied; failed-command WARN surfaced; edit-time type error surfaced
 - [ ] `mutation_check`: every mutant killed, including the ~14 new ones
 - [ ] `check_red --base main`: every new test RED on `main`
+
+---
+
+## Open review issues (as of 67718ee, 2026-10-10)
+
+Each of the three sprint reviews ends in `<review-issues-found/>` (`progress_harness_hardening.txt`). Still open:
+
+* US-015 Steps 1-2, blocked on a person: auto mode refused the edit that registers the throwaway `updatedInput` probe hook (R2-1).
+* `guard_git.py` at 325 lines, against a target of about 250 (R2-2).
+* The stale `.pyc` risk: a hook can run old code after a quick same-size edit (R2-3).
+* The ~30 bypasses the fresh reviewer found, recorded but not fixed (R3-2; `docs/evidence/harness_probes_2026-10-09.md`, section "US-REVIEW-S3: fresh-reviewer probe").
+* The `python3` warning (R1-1) not yet seen firing on a machine without Python.
+* CI not run, because the branch is not pushed.
+
+## Follow-up Sprint 4: cheap rows and stale bytecode (DRAFT, not started)
+
+**Why only these.** The post-session assessment found that the outcome gates (check_red, mutation, pytest, ruff) carry the
+assurance, and that `guard_git`, a hand-rolled shell parser, cannot be closed row by row: the reviewer's own stated limits
+need a real parser. This sprint takes only the fixes that are cheap and common, plus the one real hazard (R2-3).
+Everything else in R3-2 stays a recorded limit.
+
+**Contract.**
+- **Oracle:** each task's table, written first as parametrized tests that are RED on `main` (and on `67718ee`); one
+  mutant per fix. For US-016, the oracle is observable: no `.claude/hooks/__pycache__` exists after the suite and a live
+  firing of each hook.
+- **Scope boundary (NOT in this sprint):** the other ~25 R3-2 rows; Windows path forms in `guard_gates` (trailing dot
+  or space, `::$DATA`, 8.3 names) unless Decision 1 says yes; adding files to the gate list (Decision 2); splitting
+  `guard_git` (R2-2); mutation-check speed; app code.
+- **Failure mode:** a false deny stalls the agent, and the deny reason names the rule. Each table has allow rows to catch
+  over-matching. US-016's only cost is that hooks compile on every run; measure it.
+- **Rollback:** one commit per task on `harness-hardening`; revert it.
+
+**Rules:** as for Sprints 1-3. RED first; gate files edited only through Edit, in a session launched with
+`GATE_EDIT=1`; full gates run on a clean worktree of each task's commit, with `GATE_EDIT` unset; check_red after the
+commit; never `git add -A`.
+
+- [ ] **US-016** Hooks never run stale bytecode (R2-3) (~20 min, ~40 lines)
+- [ ] **US-017** guard_git: abbreviated long options and `-qf` clusters (~25 min, ~60 lines)
+- [ ] **US-018** guard_git: `git rm -f` over uncommitted work (~15 min, ~40 lines)
+- [ ] **US-019** guard_gates: collapse `..` before matching (~10 min, ~15 lines)
+- [ ] **US-REVIEW-S4** Sprint 4 Review 🚧 GATE (~10 min) [depends: US-016..US-019]
+
+### US-016: Hooks never run stale bytecode (R2-3)
+
+**Found by:** US-014. A same-length edit (`SEPARATORS` to `separators`) within one second left the source mtime and
+size equal to the cached `.pyc`, so Python ran the old splitter until `__pycache__` was deleted. The live hooks read
+the same cache.
+
+**Why `python3 -B` alone is not enough (VERIFIED 2026-10-10):** `-B` stops Python *writing* bytecode, not *reading* it.
+The `.pyc` files in `.claude/hooks/__pycache__` (`diagnostic_scan`, `guard_shared`, `post_edit_check`) are written
+by the test suite too: `load()` imports hooks with `importlib`, and `run_hook`/`run`/`denied` start them with
+`sys.executable`, without `-B`. Every writer must stop, and the existing cache must go.
+
+**Implementation:**
+- `.claude/settings.json`: every hook command that starts `python3 ` becomes `python3 -B `. That is 6 entries.
+  The SessionStart check also probes with `python3 -c`, which writes nothing; leave it.
+- Tests that start a hook (`tests/integration/test_hooks.py`, `test_guard_git.py`, `test_diagnostic_scan.py`) pass
+  `-B` (`[sys.executable, "-B", str(hook)]`).
+- Tests that import a hook (`load()`, `load_scan()`) set `sys.dont_write_bytecode = True` around the import and
+  restore it after. Do not touch `tests/conftest.py`: it is a gate.
+- Delete `.claude/hooks/__pycache__` once. It is gitignored, not a gate file.
+
+**Tests:**
+- `test_settings.py`: every hook command that launches `python3` launches `python3 -B`. RED on the base.
+- In a `tmp_path` copy of `.claude/hooks` with no `__pycache__`, run each hook through the same helpers the
+  suite uses, and import each through `load()`. Afterwards, no `__pycache__` exists in the copy. RED on the base.
+
+**Mutants:** `hooks-write-bytecode` (`-B` dropped from the `guard_git` command), and `test-helpers-write-bytecode`
+(`-B` dropped from `run_hook`).
+
+**Acceptance Criteria:**
+- RED pasted; mutation check kills everything.
+- **Live:** after the full suite and one live firing of each hook, `ls .claude/hooks/__pycache__` reports no such
+  directory. Paste it.
+- The per-call cost of compiling on every run, measured: one `guard_git` call with `-B` versus without.
+
+### US-017: guard_git, abbreviated long options and `-qf` clusters
+
+**Found by:** the fresh reviewer (R3-2). git accepts any unambiguous prefix of a long option, and `-f` inside a
+short-option cluster. Each row below destroyed dirty work in the reviewer's throwaway repo while the hook printed
+nothing.
+
+**Probe table to parametrized test** (`dirty` and `clean` fixtures in `tests/integration/test_guard_git.py`):
+
+| Command | Tree | Want |
+| --- | --- | --- |
+| `git reset --har`, `git reset --ha HEAD` | dirty | deny |
+| `git clean --forc`, `git clean --fo -x` | untracked present | deny |
+| `git checkout --forc main`, `git switch --disc main` | dirty | deny |
+| `git checkout -qf main`, `git checkout -fq`, `git switch -qf main` | dirty | deny |
+| `git checkout -bfix` (creates branch `fix`; the `f` is the branch name) | dirty | allow |
+| `git checkout -q main`, `git switch --detach main` | dirty | allow |
+| `git reset --har` | clean | allow |
+
+**Implementation:**
+- A helper `is_long_option(arg, name)`: true when `arg == name`, or when `arg` is at least 4 characters long
+  (`--` plus two letters) and `name` starts with `arg`.
+  - That approximates git's unique-prefix rule. `--d` alone is ambiguous in git (`--detach`, `--discard-changes`),
+    and the guard does not count it either.
+  - State it in the docstring.
+- Use the helper for `--hard`, `--force` and `--discard-changes`.
+- For `checkout` and `switch`, `f` inside a short cluster counts as `-f`, unless a value-taking flag (`b`, `B`, and
+  for switch `c`, `C`) comes before it in that cluster.
+
+**Mutants:** `git-hook-misses-abbreviated-options` and `git-hook-misses-f-in-cluster`.
+
+**Acceptance Criteria:**
+- Deny rows RED on the base; allow rows marked `@control` with a reason.
+- Mutation check kills everything.
+
+### US-018: guard_git, `git rm -f` over uncommitted work
+
+**Found by:** the fresh reviewer (R3-2). `git rm -f` deletes a file with uncommitted changes. Without `-f`, git refuses
+by itself.
+
+| Command | Tree | Want |
+| --- | --- | --- |
+| `git rm -f sub/x.txt`, `git rm --force sub/x.txt`, `git rm -rf sub` | sub/x.txt dirty | deny |
+| `git rm --cached sub/x.txt` (index only) | dirty | allow |
+| `git rm -f f.txt` | f.txt clean | allow |
+| `git rm f.txt` (git refuses dirty files itself) | any | allow |
+
+**Implementation:**
+- `check_rm`: when the command is forced (`f` in a short cluster, or `--force` through `is_long_option`) and
+  `--cached` is absent, call `refuse_if_dirty` on the path arguments.
+- Add `rm` to `CHECKS`.
+
+**Mutant:** `git-hook-allows-rm-force`.
+
+### US-019: guard_gates, collapse `..` before matching
+
+**Found by:** the fresh reviewer (R3-2). `.claude/x/../hooks/guard_git.py` is the gate (checked with `samefile`), but
+its parts never contain `(".claude", "hooks")`.
+
+| Path | Want |
+| --- | --- |
+| `.claude/x/../hooks/guard_git.py`, `tools/../ruff.toml`, `app/../.claude/settings.json` | deny |
+| `.claude/hooks/../../app/services.py` (resolves to app code) | allow |
+| `app/services.py` | allow |
+
+**Implementation:**
+- In `edit_allowed`, run `posixpath.normpath` on the slash-normalised path before casefolding and splitting it.
+
+**Mutant:** `gates-skip-dotdot`.
+
+### US-REVIEW-S4
+
+1. Full gates on a clean worktree, pasted.
+2. Re-run the reviewer's rows for US-017 to US-019 through the hooks: 0 mismatches.
+3. The US-016 live check: no `.claude/hooks/__pycache__`.
+4. Update the R3-2 section of the evidence file: mark these rows fixed, and leave the rest as stated limits.
+5. Update the "Open review issues" list above.
+
+**Gate:** `<review-passed/>` or `<review-issues-found/>`. Commit `"docs: US-REVIEW-S4 complete"`.
+
+### Decisions needed before Sprint 4
+
+1. **Windows path forms in guard_gates** (trailing dot or space per part, `::$DATA`). They fit in the same normaliser
+   as US-019, at about 5 lines and one mutant.
+   **Assumption if unanswered: no.** They were not in the cheap list.
+2. **Gate scope.** Should `pytest.ini`, a root or `tests/unit/` `conftest.py`, `.ruff.toml`, `tools/__init__.py`,
+   `.git/config` and `.git/hooks/*` join the gate list? Each can weaken a gate. Adding them is a policy change, not
+   parser work.
+   **Assumption if unanswered: not in this sprint.**
+3. **R2-2 (guard_git size).** US-017 and US-018 add about 50 lines, to about 375.
+   **Assumption if unanswered: accept the growth.** Splitting it stays a separate refactor.
