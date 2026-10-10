@@ -235,3 +235,27 @@ def test_us017_allows_on_a_dirty_tree(dirty, command):
 @pytest.mark.control("pins that an abbreviated --hard over a clean tree, which destroys nothing, stays allowed")
 def test_us017_allows_an_abbreviation_on_a_clean_tree(clean):
     assert not denied(clean, "git reset --har")
+
+
+# --- US-018: git rm -f over uncommitted work ---------------------------------
+# Without -f, git refuses to remove a file with uncommitted changes; -f
+# deletes them with no reflog (R3-2).
+
+@pytest.mark.parametrize("command", [
+    "git rm -f sub/x.txt",
+    "git rm --force sub/x.txt",
+    "git rm -rf sub",
+    "git rm --forc sub/x.txt",
+])
+def test_us018_refuses_a_forced_rm_of_dirty_work(dirty, command):
+    assert denied(dirty, command)
+
+
+@pytest.mark.control("pins the US-018 allow rows: index only, a clean file, and rm without -f (git refuses dirty itself)")
+@pytest.mark.parametrize("command", [
+    "git rm --cached sub/x.txt",
+    "git rm -f f.txt",
+    "git rm f.txt",
+])
+def test_us018_allows(dirty, command):
+    assert not denied(dirty, command)

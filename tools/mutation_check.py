@@ -269,6 +269,12 @@ MUTANTS = (
         '"reset": False,',
     ),
     Mutant(
+        "git-hook-allows-rm-force",
+        ".claude/hooks/guard_git.py",
+        '    "rm": check_rm,\n',
+        "",
+    ),
+    Mutant(
         "git-hook-misses-abbreviated-options",
         ".claude/hooks/guard_git.py",
         "    return arg == name or (len(arg) >= 4 and name.startswith(arg))\n",

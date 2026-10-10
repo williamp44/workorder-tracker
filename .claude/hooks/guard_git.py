@@ -240,6 +240,18 @@ def check_force(w: list[str], cwd: str) -> None:
         refuse_if_dirty(w, cwd)
 
 
+def check_rm(w: list[str], cwd: str) -> None:
+    """`git rm -f` deletes a file with uncommitted changes, which plain
+    `git rm` refuses to do (US-018). `--cached` touches only the index."""
+    args = w[2:]
+    if any(is_long_option(a, "--cached") for a in args) or not forced(args):
+        return
+    rest = args[args.index("--") + 1:] if "--" in args else args
+    paths = [a for a in rest if not a.startswith("-")]
+    if paths:
+        refuse_if_dirty(w, cwd, paths)
+
+
 def check_clean(w: list[str], cwd: str) -> None:
     args = w[2:]
     flags = short_flags(args)
@@ -261,6 +273,7 @@ CHECKS = MappingProxyType({
     "reset": check_force,
     "stash": check_force,
     "clean": check_clean,
+    "rm": check_rm,
 })
 
 
