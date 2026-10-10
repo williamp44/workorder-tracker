@@ -677,3 +677,67 @@ command alongside.
 
 STATUS: Sprint 5 probes VERIFIED. No build work remains for the agent; US-020, US-021 and H-1 are
 person-only.
+
+## Sprint 6 (2026-10-10), from PR 5. Run in the review session, launched with GATE_EDIT=1.
+Preconditions: `echo "GATE_EDIT=[$GATE_EDIT]"` -> `GATE_EDIT=[1]`; every gate edit was announced
+("gate edit to ...diagnostic_scan.py allowed by GATE_EDIT=1 ...").
+
+## US-022 Judge shell-written Python by git content, not mtime
+RED (before the code change), 8 probe-table tests:
+    FAILED test_a_rebase_that_rewrites_files_with_identical_content_is_not_reported
+      AssertionError: assert 'Python files...`also_unused`' == ''
+    FAILED test_a_checkout_whose_files_match_the_new_head_is_not_reported
+    FAILED test_touching_a_clean_file_is_not_reported
+    FAILED test_outside_a_git_work_tree_the_check_falls_back_to_mtime_and_says_so
+    4 failed, 4 passed (the 4 @control rows: untracked, dirty, written+committed in one command,
+    stash pop leaving the file dirty)
+Fixture note: setup commits are backdated with GIT_COMMITTER_DATE (reflog entries honour it) and
+os.utime, so they fall outside the command's window.
+Design, deviation from the PRD wording (stricter): rule (b) counts only when EVERY reflog entry in the
+window is `commit:` / `commit (initial):`; any other entry voids it, rather than parsing rebase spans.
+The reflog time comes from `--date=unix` %gd (the entry time), not %ct (the commit date), because a
+checkout of an old commit has an old %ct.
+In-turn catch: post_edit_check flagged F821 `subprocess` (missing import) on the first edit. The
+scanner would have crashed on every shell call, silently, since it only reports. Fixed on the next edit.
+Gates: ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s) | pytest 406 passed
+check_red --base a9058d3^ --head a9058d3: 10 new test(s), 4 declared control(s); OK all 6 new RED
+Mutants, run alone: shell-check-ignores-git-state exit 1; shell-check-misses-same-command-commit exit 1
+Live (throwaway branch probe-us022, deleted after):
+  `git rebase -q --force-rebase HEAD~3 --exec 'git commit -q --amend --no-edit'` -> trees same as
+  a9058d3: yes; rewrote diagnostic_scan.py, test_diagnostic_scan.py, mutation_check.py -> NO context.
+  `printf 'import os\n' > scratch_probe_us022.py` ->
+    Python files written through a shell (post_edit_check did not see these):
+      scratch_probe_us022.py:1:8: F401 [*] `os` imported but unused
+  `git switch harness-hardening` (identical rewrite again) -> no context.
+STATUS: US-022 [x] VERIFIED (a9058d3)
+
+## US-023 Name every file the shell check saw
+RED: test_every_candidate_file_is_named_checked_or_not failed with exactly PR 5's shape:
+    a_bad.py:1:7: ARG001 ... / ... and 2 more file(s) not checked   (f1..f6 never named)
+    1 failed, 1 passed (@control: all clean -> nothing)
+After, the same 7 files:
+    7 file(s): 1 with findings, 4 clean, 2 not checked
+    a_bad.py: 1 finding(s) / f1.py..f4.py: clean / f5.py, f6.py: not checked (over the limit of 5)
+Gates: ruff clean | check_types 0 | check_fp 0 | pytest 409 passed
+check_red --base HEAD^ --head HEAD (26de8e0): 3 new, 1 control; OK all 2 new RED
+Mutant shell-check-hides-unchecked-names: exit 1 (killed)
+STATUS: US-023 [x] VERIFIED (26de8e0)
+
+## US-REVIEW-S6
+1. Full gates on a clean worktree of 26de8e0 (VIRTUAL_ENV, GATE_EDIT, PYTHONDONTWRITEBYTECODE unset):
+    ruff: All checks passed!
+    check_types: INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics
+    check_fp: 0 finding(s)
+    pytest: 409 passed in 49.13s
+    check_red --base main: 198 new test(s), 49 declared control(s); OK all 149 new test(s) were RED
+    mutation_check: OK control passed, equivalent canary survived, 57 of 57 mutants killed
+2. Yardstick: every live "written through a shell" report in this repo's transcripts (399 shell calls
+   across all sessions; the check exists only since US-013, so the sample is small): 3 reports.
+     [git rewrite] PR 5 author rewrite (rebase + commit --amend, identical trees) -> disappears under
+                   US-022 (reproduced live on probe-us022: silent).
+     [shell write] US-013 live probe `printf 'import os\n' > scratch_shell_probe.py` -> still reported.
+     [shell write] US-022 live probe, after the fix -> reported (F401).
+   Every report that disappears is a tree-identical rewrite; no real shell write is lost.
+<review-passed/>
+STATUS: Sprint 6 VERIFIED. Remaining items are person-only: US-020, US-021, H-1 (gate review; record
+PR 5's CI in docs/CHECKS.md).

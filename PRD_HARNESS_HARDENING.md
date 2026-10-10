@@ -114,9 +114,9 @@ GATE_EDIT=1 ./ralph.sh harness_hardening 20 2 sonnet     # from the repo root, o
 ## Task Summary
 
 - **Total:** 21 build tasks + 5 review gates = 26 (US-011 to US-015 added 2026-10-09 from the transcript audit; Sprint 4, US-016 to US-019 and its review, added 2026-10-10; Sprint 6, US-022, US-023 and its review, added 2026-10-10 from PR 5)
-- **Progress:** 22/26 closed: 17 build tasks built, US-009 skipped by decision, 4 reviews passed or recorded; US-015 partial (Step 3 done, Steps 1-2 blocked on a person)
-- **Status:** Sprint 6 not started; open issues in "Open review issues" at the end of this file
-- **Next Task:** US-022 (agent, needs `GATE_EDIT=1`). Person-only items: US-020, US-021, H-1 (review the gates, read PR 5's CI); see Sprint 5
+- **Progress:** 25/26 closed: 19 build tasks built, US-009 skipped by decision, 5 reviews passed or recorded; US-015 partial (Step 3 done, Steps 1-2 blocked on a person)
+- **Status:** Sprint 6 DONE 2026-10-10 (US-022 a9058d3, US-023 26de8e0, review passed: 57 of 57 mutants); open issues in "Open review issues" at the end of this file
+- **Next Task:** none for the agent. Person-only items: US-020, US-021, H-1 (review the gates, read PR 5's CI); see Sprint 5
 
 ## Task Dependencies
 
@@ -812,7 +812,7 @@ evidence available: every shell command in all 6 agent transcripts for this repo
 ---
 
 ## Sprint 6: US-013's first real outing, found on PR 5 (2026-10-10)
-**Status:** NOT STARTED
+**Status:** DONE
 
 **Found by:** the author rewrite of PR 5. `git rebase main --exec 'git commit --amend --author=…'` rewrote the
 branch with every tree identical (`git diff --quiet e0c9857 HEAD` → trees match). `diagnostic_scan` then
@@ -830,9 +830,9 @@ Two defects:
    (5) files were checked and were clean, so they added no lines. The 7 unchecked files became the bare
    "… and 7 more". The header sat over an empty list, and no file was ever named, checked or not.
 
-- [ ] **US-022** Judge shell-written Python by content, not mtime (~25 min, ~60 lines) [depends: US-013]
-- [ ] **US-023** Name every file the shell check saw, checked or not (~10 min, ~25 lines) [depends: US-022]
-- [ ] **US-REVIEW-S6** Sprint 6 Review 🚧 GATE (~5 min) [depends: US-022, US-023]
+- [x] **US-022** Judge shell-written Python by content, not mtime (~25 min, ~60 lines) [depends: US-013]
+- [x] **US-023** Name every file the shell check saw, checked or not (~10 min, ~25 lines) [depends: US-022]
+- [x] **US-REVIEW-S6** Sprint 6 Review 🚧 GATE (~5 min) [depends: US-022, US-023]
 
 ### US-022: Judge shell-written Python by content, not mtime (~25 min, ~60 lines)
 
