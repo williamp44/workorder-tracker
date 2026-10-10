@@ -159,6 +159,18 @@ MUTANTS = (
         "",
     ),
     Mutant(
+        "gate-hook-forgets-settings-local",
+        ".claude/hooks/guard_gates.py",
+        '    (".claude", "settings.local.json"),\n',
+        "",
+    ),
+    Mutant(
+        "gate-override-accepts-any-value",
+        ".claude/hooks/guard_gates.py",
+        "os.environ.get(OVERRIDE) == \"1\"",
+        "os.environ.get(OVERRIDE)",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'if any(a in ("-A", "--all", "-u", "--update") for a in args):',

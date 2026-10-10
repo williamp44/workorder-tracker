@@ -6,9 +6,11 @@ through its pure functions or its stdin/stdout contract.
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -40,7 +42,7 @@ def run_hook(name: str, payload: dict | str) -> dict | None:
 
 
 def denied(decision: dict | None) -> bool:
-    return bool(decision) and decision["hookSpecificOutput"]["permissionDecision"] == "deny"
+    return bool(decision) and decision["hookSpecificOutput"].get("permissionDecision") == "deny"
 
 
 # --- guard_gates: the gates cannot be edited inside a gated turn ------------
@@ -83,6 +85,44 @@ def test_gate_hook_denies_through_its_stdin_contract():
 
 def test_gate_hook_denies_an_unreadable_payload():
     assert denied(run_hook("guard_gates", "{not json"))
+
+
+def test_settings_local_json_is_a_gate():
+    # Its `disableAllHooks` and `env` keys can switch every gate off.
+    ok, why = load("guard_gates").edit_allowed(".claude/settings.local.json")
+    assert not ok and why
+
+
+def run_gates_launched_with(gate_edit: str | None, payload: dict) -> dict | None:
+    """guard_gates as Claude Code runs it, in a process launched with or
+    without GATE_EDIT. A hook inherits the launch env; a Bash call cannot set it."""
+    env = {k: v for k, v in os.environ.items() if k != "GATE_EDIT"}
+    if gate_edit is not None:
+        env["GATE_EDIT"] = gate_edit
+    r = subprocess.run([sys.executable, str(HOOKS / "guard_gates.py")],
+                       input=json.dumps(payload), capture_output=True, text=True, cwd=ROOT, env=env)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout) if r.stdout.strip() else None
+
+
+GATE_EDIT_PAYLOAD = MappingProxyType({"tool_name": "Edit", "tool_input": {"file_path": str(ROOT / "ruff.toml")}})
+
+
+def test_a_launch_override_lets_a_person_open_the_gates_and_says_so():
+    decision = run_gates_launched_with("1", dict(GATE_EDIT_PAYLOAD))
+    assert not denied(decision)
+    assert decision is not None and "GATE_EDIT" in decision["hookSpecificOutput"]["additionalContext"]
+
+
+@pytest.mark.control("pins that only the exact value 1 opens the gates; base denies all of these")
+@pytest.mark.parametrize("value", [None, "0", "", "true", "yes"])
+def test_anything_but_gate_edit_1_keeps_the_gates_shut(value):
+    assert denied(run_gates_launched_with(value, dict(GATE_EDIT_PAYLOAD)))
+
+
+@pytest.mark.control("pins that the override never excuses a payload the hook cannot judge")
+def test_the_override_does_not_wave_through_a_payload_with_no_path():
+    assert denied(run_gates_launched_with("1", {"tool_name": "Edit", "tool_input": {}}))
 
 
 # --- guard_git: commands that quietly destroy work -------------------------

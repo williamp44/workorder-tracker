@@ -15,12 +15,21 @@ work. Hooks that judged the work itself (is anything failing, is this a
 TDD-shaped edit) were measured in another project: about 18 refusals and 0
 defects caught. This is the one refusal that was unambiguously right.
 
+THE OVERRIDE. A person who means to change the gates launches Claude Code
+with GATE_EDIT=1 in its environment. A hook inherits the environment Claude
+Code was launched with; a Bash call made inside the session cannot set it,
+and settings.local.json, whose `env` key could, is itself a gate. Every edit
+the override lets through is announced to the agent, so it is never silent.
+Only the exact value "1" opens the gates, and it never excuses a payload
+the hook cannot judge.
+
 Its limit, written down so it is not trusted past it: Bash is not covered.
 A script can still write these files. This raises the cost of weakening a
 gate from nothing to doing it visibly.
 """
 
 import json
+import os
 import sys
 from pathlib import PurePath
 
@@ -30,11 +39,13 @@ import guard_shared
 GATES = (
     (".claude", "hooks"),
     (".claude", "settings.json"),
+    (".claude", "settings.local.json"),
     (".github", "workflows"),
     ("ruff.toml",),
     ("pyrefly.toml",),
     ("tools", "mutation_check.py"),
 )
+OVERRIDE = "GATE_EDIT"
 
 
 def edit_allowed(path: str | None) -> tuple[bool, str]:
@@ -52,6 +63,15 @@ def edit_allowed(path: str | None) -> tuple[bool, str]:
     return True, ""
 
 
+def announce(path: str) -> None:
+    """Let a gate edit through under the launch override, and say so."""
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": (f"gate edit to {path} allowed by {OVERRIDE}=1, set when this "
+                              f"session was launched. A person must review this change."),
+    }}))
+
+
 def main() -> int:
     raw = sys.stdin.read()
     try:
@@ -62,8 +82,13 @@ def main() -> int:
         return 0
     if data.get("tool_name") not in ("Write", "Edit", "MultiEdit"):
         return 0
-    ok, why = edit_allowed((data.get("tool_input") or {}).get("file_path"))
-    if not ok:
+    path = (data.get("tool_input") or {}).get("file_path")
+    ok, why = edit_allowed(path)
+    if ok:
+        return 0
+    if path and path.strip() and os.environ.get(OVERRIDE) == "1":
+        announce(path)
+    else:
         guard_shared.deny(why)
     return 0
 
