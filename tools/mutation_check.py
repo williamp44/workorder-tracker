@@ -174,9 +174,21 @@ MUTANTS = (
         "shell-hooks-skip-powershell",
         ".claude/settings.json",
         '"matcher": "Bash|PowerShell",\n        "hooks": [\n          {\n            "type": "command",\n'
-        '            "command": "python3 \\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py',
+        '            "command": "python3 -B \\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py',
         '"matcher": "Bash",\n        "hooks": [\n          {\n            "type": "command",\n'
-        '            "command": "python3 \\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py',
+        '            "command": "python3 -B \\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py',
+    ),
+    Mutant(
+        "hooks-write-bytecode",
+        ".claude/settings.json",
+        '"command": "python3 -B \\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py',
+        '"command": "python3 \\"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py',
+    ),
+    Mutant(
+        "test-helpers-write-bytecode",
+        "tests/integration/test_hooks.py",
+        'return [sys.executable, "-B", str(script)]',
+        "return [sys.executable, str(script)]",
     ),
     Mutant(
         "gate-hook-skips-notebooks",

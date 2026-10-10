@@ -85,6 +85,15 @@ def test_a_working_python3_is_silent_at_session_start(tmp_path):
     assert r.returncode == 0 and r.stdout.strip() == ""
 
 
+def test_every_hook_script_is_launched_without_writing_bytecode():
+    # US-016: a .pyc a hook writes is one it can later read stale.
+    hooks = json.loads(SETTINGS.read_text())["hooks"]
+    commands = [hook["command"] for event in hooks.values() for entry in event for hook in entry["hooks"]
+                if ".claude/hooks/" in hook["command"]]
+    assert commands
+    assert all(c.startswith("python3 -B ") for c in commands), commands
+
+
 def test_gate_hook_covers_notebook_edits():
     for tools in matchers_for("guard_gates.py"):
         assert {"Write", "Edit", "MultiEdit", "NotebookEdit"} <= tools, sorted(tools)
