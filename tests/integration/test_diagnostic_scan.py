@@ -232,6 +232,14 @@ def test_a_powershell_result_without_no_output_expected_is_not_an_alarm():
     assert "CONTRACT" not in context(run(data))
 
 
+def test_a_headless_session_without_a_scratchpad_is_not_an_alarm():
+    # Found live in US-REVIEW-S3: `claude -p` payloads have no scratchpad_dir,
+    # so every call in a headless run (ralph.sh) alarmed. The guard never reads it.
+    data = payload(stdout="all good\n")
+    del data["scratchpad_dir"]
+    assert "CONTRACT" not in context(run(data))
+
+
 @pytest.mark.control("pins that losing a key the guard reads still alarms; base alarms too")
 def test_losing_stdout_is_still_an_alarm():
     data = payload(stdout="all good\n")

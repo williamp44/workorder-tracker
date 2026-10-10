@@ -117,6 +117,9 @@ FAILURE_EVENT = "PostToolUseFailure"
 # Pinned from a Bash payload, but absent from every PowerShell one (found
 # live in US-001). The guard never reads it.
 OPTIONAL_RESPONSE_KEYS = frozenset({"noOutputExpected"})
+# Pinned from an interactive session, absent from every headless (`claude -p`)
+# one, so every call in a ralph.sh run alarmed (found live in US-REVIEW-S3).
+OPTIONAL_TOP_LEVEL_KEYS = frozenset({"scratchpad_dir"})
 
 # Sentinel: the payload had neither `tool_response` nor `tool_output`, so the
 # contract moved. Distinct from "" so it cannot read as a clean run.
@@ -179,7 +182,8 @@ def check_contract(data: dict) -> list[str]:
     # Only a LOSS is reported (US-007). Every alarm seen live was an added key
     # (persistedOutputPath, backgroundTaskId, bashEditDiff, ...), all benign,
     # and a guard that cries wolf is read past.
-    gone = [k for k in pin.get("top_level_keys") or [] if k not in live["top_level_keys"]]
+    gone = [k for k in pin.get("top_level_keys") or []
+            if k not in live["top_level_keys"] and k not in OPTIONAL_TOP_LEVEL_KEYS]
     if gone:
         notes.append(f"the hook payload SHAPE MOVED since it was pinned; keys gone: "
                      f"{', '.join(gone)}. Re-read extract_output() before trusting a quiet run.")

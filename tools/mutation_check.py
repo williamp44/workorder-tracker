@@ -318,6 +318,12 @@ MUTANTS = (
         "",
     ),
     Mutant(
+        "contract-alarms-on-headless-sessions",
+        ".claude/hooks/diagnostic_scan.py",
+        'OPTIONAL_TOP_LEVEL_KEYS = frozenset({"scratchpad_dir"})',
+        "OPTIONAL_TOP_LEVEL_KEYS = frozenset()",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'or any("A" in a[1:] or "u" in a[1:] for a in short)):',
