@@ -45,7 +45,11 @@ def findings(path: Path, root: Path, python: str = sys.executable) -> list[str]:
         out.append(f"ruff could not run (exit {lint.returncode}): {lint.stderr.strip()[:200]}")
     out += [ln for ln in lint.stdout.splitlines() if ln.strip()]
     if root in path.resolve().parents:
-        types = _run(python, ["pyrefly", "check", "--preset", "default",
+        # A hook imports its siblings by directory, as Claude Code runs it;
+        # check_types adds the same search path for the hooks.
+        hooks = root / ".claude" / "hooks"
+        siblings = ["--search-path", str(hooks)] if path.resolve().parent == hooks.resolve() else []
+        types = _run(python, ["pyrefly", "check", "--preset", "default", *siblings,
                               "--python-interpreter-path", python, str(path)], root)
         out += [ln for ln in types.stdout.splitlines() if ln.startswith("ERROR")]
     return out

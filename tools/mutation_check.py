@@ -221,6 +221,12 @@ MUTANTS = (
         "",
     ),
     Mutant(
+        "post-edit-forgets-hook-siblings",
+        ".claude/hooks/post_edit_check.py",
+        '"--preset", "default", *siblings,',
+        '"--preset", "default",',
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'if any(a in ("-A", "--all", "-u", "--update") for a in args):',

@@ -251,3 +251,13 @@ Full gate run:
     pytest 261 passed | check_red: 32 new, 8 controls, OK all 24 new RED
     mutation: OK 31 of 31 mutants killed (gates-case-sensitive, gates-forget-check-red exit 1)
 STATUS: US-004 [x] VERIFIED
+
+## Fix: post_edit_check false missing-import on hooks (found in US-004)
+RED:
+    FAILED test_hooks.py::test_post_edit_check_is_silent_on_a_clean_hook_that_imports_its_sibling
+      Left contains one more item: 'ERROR Cannot find module `guard_shared` [missing-import]'
+Fix: for a file in .claude/hooks, add that directory to pyrefly's search path, as check_types does.
+Full gate run: ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 263 passed | check_red: 46 new, 11 controls, OK all 35 new RED
+    mutation: OK 32 of 32 killed (post-edit-forgets-hook-siblings exit 1)
+STATUS: VERIFIED

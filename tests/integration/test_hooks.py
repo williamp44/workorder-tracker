@@ -247,6 +247,12 @@ def test_post_edit_check_is_silent_on_a_clean_file_whatever_python_is_on_path(tm
     assert json.loads(r.stdout) == []
 
 
+def test_post_edit_check_is_silent_on_a_clean_hook_that_imports_its_sibling():
+    # Hooks import guard_shared by directory, as Claude Code runs them;
+    # check_types adds .claude/hooks to the search path, and so must this.
+    assert load("post_edit_check").findings(HOOKS / "guard_gates.py", ROOT) == []
+
+
 def test_post_edit_check_says_the_layer_is_off_when_there_is_no_venv(tmp_path):
     edited = tmp_path / "edited.py"
     edited.write_text("x = 1\n")
