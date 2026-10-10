@@ -293,6 +293,12 @@ MUTANTS = (
         "        pass\n",
     ),
     Mutant(
+        "shell-written-python-unchecked",
+        ".claude/hooks/diagnostic_scan.py",
+        "    written = shell_written(data)\n",
+        "    written = []\n",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'or any("A" in a[1:] or "u" in a[1:] for a in short)):',

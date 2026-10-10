@@ -42,12 +42,14 @@ Exit 0 always: it reports, it never blocks. Ported from host6
 """
 
 import datetime
+import importlib.util
 import io
 import json
 import os
 import pathlib
 import re
 import sys
+import time
 
 # Unsolicited toolchain diagnostics: something a tool emitted that the
 # operator did not ask for, not a verdict the operator's own code printed.
@@ -265,8 +267,12 @@ def failure_line(data: dict) -> str | None:
     return f"the command FAILED (exit {m.group(1)})" if m else "the command FAILED"
 
 
-def render(hits, cmd: str, cmd_hits=(), contract_notes=(), failed: str | None = None) -> str:
+def render(hits, cmd: str, cmd_hits=(), contract_notes=(), failed: str | None = None,
+           written=()) -> str:
     out = [f"{failed}. Its output was scanned too:"] if failed else []
+    if written:
+        out.append("Python files written through a shell (post_edit_check did not see these):")
+        out.extend(f"  {w}" for w in written)
     if contract_notes:
         out.append("PAYLOAD CONTRACT: the guard may be reading the wrong keys, so a quiet run proves nothing:")
         out.extend(f"  !! {n}" for n in contract_notes)
@@ -302,6 +308,59 @@ def _trace(msg: str) -> None:
         sys.stderr.write(f"diagnostic_scan: could not write trace to {log}\n")
 
 
+# --- Python written through a shell (US-013) ---------------------------------
+# post_edit_check fires on Write/Edit only. A .py file written by a heredoc
+# or a patch script skipped the in-turn lint: an unused import got through
+# a turn that way and was caught only by the full gate run.
+
+SKIP_DIRS = frozenset((".git", ".venv", "__pycache__", ".pytest_cache", "node_modules"))
+MAX_WRITTEN = 5  # each check runs ruff and pyrefly; the hook has a 15 s budget
+SLACK_S = 2      # clock and mtime granularity
+
+
+def recently_written(root: pathlib.Path, since: float) -> list[pathlib.Path]:
+    """The .py files under root whose mtime is at or after `since`."""
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for name in filenames:
+            if name.endswith(".py"):
+                p = pathlib.Path(dirpath) / name
+                try:
+                    if p.stat().st_mtime >= since:
+                        found.append(p)
+                except OSError:
+                    continue
+    return sorted(found)
+
+
+def shell_written(data: dict) -> list[str]:
+    """post_edit_check's findings on the .py files this command wrote."""
+    cwd, duration = data.get("cwd"), data.get("duration_ms")
+    if not cwd or not isinstance(duration, (int, float)):
+        return []
+    root = pathlib.Path(cwd).resolve()
+    files = recently_written(root, time.time() - duration / 1000 - SLACK_S)
+    if not files:
+        return []
+    try:
+        sys.path.insert(0, str(HERE))
+        import post_edit_check
+    except Exception as exc:
+        return [f"could not check {len(files)} file(s): {type(exc).__name__}: {exc}"]
+    venv = post_edit_check.venv_python(root, os.name)
+    if venv.exists():
+        python = str(venv)
+    elif all(importlib.util.find_spec(m) for m in ("ruff", "pyrefly")):
+        python = sys.executable  # CI and mutation copies have no .venv
+    else:
+        return []  # post_edit_check already says loudly that the layer is off
+    out = [p for f in files[:MAX_WRITTEN] for p in post_edit_check.findings(f, root, python)]
+    if len(files) > MAX_WRITTEN:
+        out.append(f"... and {len(files) - MAX_WRITTEN} more file(s) not checked")
+    return out
+
+
 def main() -> int:
     try:
         raw = sys.stdin.read()
@@ -321,12 +380,13 @@ def main() -> int:
         return 0
     cmd = (data.get("tool_input") or {}).get("command", "")
     hits, cmd_hits = scan(out), scan_command(cmd)
-    _trace(f"  output={len(out)} chars hits={len(hits)} cmd_hazards={cmd_hits}")
-    if not hits and not cmd_hits and not contract_notes:
+    written = shell_written(data)
+    _trace(f"  output={len(out)} chars hits={len(hits)} cmd_hazards={cmd_hits} written={len(written)}")
+    if not hits and not cmd_hits and not contract_notes and not written:
         return 0
     message = json.dumps({"hookSpecificOutput": {
         "hookEventName": data.get("hook_event_name") or "PostToolUse",
-        "additionalContext": render(hits, cmd, cmd_hits, contract_notes, failure_line(data)),
+        "additionalContext": render(hits, cmd, cmd_hits, contract_notes, failure_line(data), written),
     }})
     sys.stdout.buffer.write((message + "\n").encode("utf-8"))
     return 0

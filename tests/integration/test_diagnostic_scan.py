@@ -12,8 +12,12 @@ passing output from this repo, and matter more: a guard that fires on a clean
 run teaches the reader to ignore it.
 """
 
+import importlib.util
 import json
+import os
+import shutil
 import subprocess
+import time
 from types import MappingProxyType
 import sys
 from pathlib import Path
@@ -239,6 +243,57 @@ def test_a_diagnostic_in_a_failed_command_is_reported_as_a_failure():
 def test_a_failed_command_with_no_diagnostic_stays_quiet():
     r = run(failure_payload("Exit code 1\n"))
     assert r.returncode == 0 and r.stdout.strip() == ""
+
+
+# --- Python written through a shell (US-013) --------------------------------
+# post_edit_check fires on Write/Edit only. A file written by a shell command
+# (a heredoc, a patch script) skipped the in-turn lint; an F401 got through.
+
+ROOT = HOOKS.parents[1]
+
+
+def load_scan():
+    sys.path.insert(0, str(HOOKS))
+    try:
+        spec = importlib.util.spec_from_file_location("diagnostic_scan", HOOK)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(str(HOOKS))
+
+
+def test_recently_written_finds_only_the_python_files_changed_since(tmp_path):
+    old, new, note = tmp_path / "old.py", tmp_path / "pkg" / "new.py", tmp_path / "new.md"
+    new.parent.mkdir()
+    for f in (old, new, note):
+        f.write_text("x = 1\n")
+    os.utime(old, (1_000_000, 1_000_000))
+    since = time.time() - 60
+    assert load_scan().recently_written(tmp_path, since) == [new]
+
+
+def shell_payload(project: Path, command: str) -> dict:
+    data = payload(stdout="", command=command)
+    data["cwd"], data["duration_ms"] = str(project), 500
+    return data
+
+
+def test_python_written_through_a_shell_is_checked(tmp_path):
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    (tmp_path / "bad.py").write_text("def f(unused):\n    return 1\n")
+    ctx = context(run(shell_payload(tmp_path, "python write_it.py")))
+    assert "Python files written through a shell" in ctx and "ARG001" in ctx
+
+
+@pytest.mark.control("pins precision: a command that writes no .py file adds nothing; base adds nothing")
+def test_a_command_that_writes_no_python_reports_nothing(tmp_path):
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    bad = tmp_path / "bad.py"
+    bad.write_text("def f(unused):\n    return 1\n")
+    os.utime(bad, (1_000_000, 1_000_000))  # written long before this command
+    assert context(run(shell_payload(tmp_path, "ls"))) == ""
 
 
 # --- robustness: reports, never blocks ------------------------------------
