@@ -90,6 +90,30 @@ def test_editing_ordinary_code_is_allowed(path):
     assert load("guard_gates").edit_allowed(path) == (True, "")
 
 
+@pytest.mark.parametrize("path", [
+    # F6: gates the list missed. Each decides whether work is correct.
+    "tools/check_red.py",
+    "tools/check_fp.py",
+    "tools/check_types.py",
+    "tools/isolation.py",
+    "tests/conftest.py",   # enforces the control-test reason
+    "pyproject.toml",      # pytest config: testpaths, addopts
+    # F6: case variants. Windows and macOS file systems ignore case.
+    ".Claude/Hooks/guard_git.py",
+    "RUFF.TOML",
+    "Tools/Mutation_Check.py",
+])
+def test_every_gate_in_the_probe_table_is_refused(path):
+    ok, why = load("guard_gates").edit_allowed(path)
+    assert not ok and why
+
+
+@pytest.mark.control("pins the allow rows of the US-004 probe table; base allows them too")
+@pytest.mark.parametrize("path", ["app/services.py", "tests/unit/test_rules.py", "tests/spec.py"])
+def test_the_allowed_rows_of_the_probe_table_stay_editable(path):
+    assert load("guard_gates").edit_allowed(path) == (True, "")
+
+
 def test_a_payload_with_no_path_is_refused_not_waved_through():
     ok, _ = load("guard_gates").edit_allowed(None)
     assert not ok

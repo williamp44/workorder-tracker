@@ -234,3 +234,20 @@ Full gate run:
     pytest 247 passed | check_red: 28 new, 8 controls, OK all 20 new RED
     mutation: OK 29 of 29 mutants killed (python3-check-silent exit 1)
 STATUS: R1-1 VERIFIED (live session start pending)
+
+## US-004 guard_gates scope
+RED (before the change):
+    FAILED test_every_gate_in_the_probe_table_is_refused[tools/check_red.py]
+    ... [tools/check_fp.py] [tools/check_types.py] [tools/isolation.py] [tests/conftest.py]
+    ... [pyproject.toml] [.Claude/Hooks/guard_git.py] [RUFF.TOML] [Tools/Mutation_Check.py]
+    9 failed, 3 passed (the 3 allow rows; @control)
+The settings.local.json row is already covered by P-1's test_settings_local_json_is_a_gate.
+FINDING (fixed next, separately): post_edit_check reports a false
+`ERROR Cannot find module guard_shared [missing-import]` on every edit to a
+hook that imports guard_shared. Unlike check_types, it does not add
+.claude/hooks to the search path.
+Full gate run:
+    ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 261 passed | check_red: 32 new, 8 controls, OK all 24 new RED
+    mutation: OK 31 of 31 mutants killed (gates-case-sensitive, gates-forget-check-red exit 1)
+STATUS: US-004 [x] VERIFIED

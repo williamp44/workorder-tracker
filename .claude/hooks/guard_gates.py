@@ -43,7 +43,13 @@ GATES = (
     (".github", "workflows"),
     ("ruff.toml",),
     ("pyrefly.toml",),
+    ("pyproject.toml",),  # pytest's testpaths and addopts
     ("tools", "mutation_check.py"),
+    ("tools", "check_red.py"),
+    ("tools", "check_fp.py"),
+    ("tools", "check_types.py"),
+    ("tools", "isolation.py"),
+    ("tests", "conftest.py"),  # enforces the control-test reason
 )
 OVERRIDE = "GATE_EDIT"
 
@@ -53,7 +59,9 @@ def edit_allowed(path: str | None) -> tuple[bool, str]:
     if not path or not path.strip():
         # Refused, not permitted: a check that cannot judge is not a check that passed.
         return False, "no file path in the payload, so this hook cannot tell whether a gate is being edited"
-    parts = PurePath(path.replace("\\", "/")).parts
+    # Casefolded: Windows and macOS file systems ignore case, so .Claude/Hooks
+    # is .claude/hooks there (F6). On Linux this also refuses a new RUFF.TOML.
+    parts = PurePath(path.replace("\\", "/").casefold()).parts
     for gate in GATES:
         n = len(gate)
         if any(parts[i:i + n] == gate for i in range(len(parts) - n + 1)):

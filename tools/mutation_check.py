@@ -209,6 +209,18 @@ MUTANTS = (
         ">/dev/null 2>&1; true || printf",
     ),
     Mutant(
+        "gates-case-sensitive",
+        ".claude/hooks/guard_gates.py",
+        'PurePath(path.replace("\\\\", "/").casefold()).parts',
+        'PurePath(path.replace("\\\\", "/")).parts',
+    ),
+    Mutant(
+        "gates-forget-check-red",
+        ".claude/hooks/guard_gates.py",
+        '    ("tools", "check_red.py"),\n',
+        "",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'if any(a in ("-A", "--all", "-u", "--update") for a in args):',
