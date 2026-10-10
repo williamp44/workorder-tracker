@@ -118,3 +118,55 @@ Full gate run (VIRTUAL_ENV unset, GATE_EDIT=1):
     pytest and mutation were NOT re-run after the F401 fix: it removed one
     unused import. test_check_types.py re-run: 3 passed.
 STATUS: US-002 [x] VERIFIED
+
+## US-003 diagnostic_scan also scans failed commands
+Step 1, recorded before the fix: diagnostic_scan registered under
+PostToolUseFailure (Bash|PowerShell). The contract file is now chosen by
+hook_event_name. With .fired.log armed, `echo "WARN live"; exit 3` (Bash):
+    .fired.log: 2026-10-09T20:55:04 fired tool=Bash      (no output= line: scanned nothing)
+    payload_contract_failure.json top_level_keys: cwd, duration_ms, effort, error,
+      hook_event_name, is_interrupt, permission_mode, prompt_id, scratchpad_dir,
+      session_id, tool_input, tool_name, tool_use_id, transcript_path
+    tool_response_keys: null   (no tool_response at all)
+    tool_input_keys: command, description
+  PowerShell `Write-Output "WARN live"; exit 3` -> `fired tool=PowerShell`, same shape.
+  The output is in `error`. There is no exit-code key: the harness writes
+  "Exit code n" into error, as displayed to the agent; failure_line() parses it.
+
+RED (before extract_output read `error`):
+    FAILED test_diagnostic_scan.py::test_a_diagnostic_in_a_failed_command_is_reported_as_a_failure
+      json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)   (hook printed nothing)
+    1 failed, 3 passed
+  test_the_recorded_failure_contract_carries_the_output_in_error: RED on the
+  base (the pin file does not exist there); check_red confirms it.
+  test_a_failed_command_with_no_diagnostic_stays_quiet: @control (precision).
+  test_settings.py::test_failed_shell_commands_are_scanned_too added (RED on the base).
+
+Live (after the fix):
+    PostToolUseFailure:Bash hook additional context: the command FAILED (exit 3). Its output was scanned too:
+    1 unaddressed diagnostic line(s) ...
+      command: echo "WARN live"; exit 3
+      L2     WARN live
+              ^ a tool logged a warning
+    PostToolUseFailure:PowerShell hook additional context: the command FAILED (exit 3). Its output was scanned too:
+      command: Write-Output "WARN live"; exit 3
+      L2     WARN live
+              ^ a tool logged a warning
+  .fired.log deleted after.
+
+Process note: I wrote a Python patch script for diagnostic_scan.py, then
+discarded it unrun (the rule: never write a gate through a shell). All gate
+edits went through Edit.
+Observed: the suite runs the real hooks in place, so an armed .fired.log
+also logs every test firing. Harmless; noted for whoever reads a trace.
+
+Full gate run:
+    ruff: All checks passed!
+    check_types: INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics
+    check_fp: 0 finding(s)
+    pytest: 243 passed in 9.85s
+    check_red --base main: 23 new test(s), 7 declared control(s)
+                           OK   all 16 new test(s) were RED on the base code
+    mutation_check: OK   control passed, equivalent canary survived, 28 of 28 mutants killed
+      (scan-ignores-failed-commands exit 1)
+STATUS: US-003 [x] VERIFIED

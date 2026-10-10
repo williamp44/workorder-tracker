@@ -35,6 +35,14 @@ def test_shell_hooks_judge_every_shell_tool(script):
         assert {"Bash", "PowerShell"} <= tools, f"{script} matcher is {sorted(tools)}"
 
 
+def test_failed_shell_commands_are_scanned_too():
+    # F4: a non-zero exit fires PostToolUseFailure, never PostToolUse.
+    hooks = json.loads(SETTINGS.read_text())["hooks"]
+    assert any("diagnostic_scan.py" in hook["command"]
+               for entry in hooks.get("PostToolUseFailure", [])
+               for hook in entry["hooks"])
+
+
 def test_gate_hook_covers_notebook_edits():
     for tools in matchers_for("guard_gates.py"):
         assert {"Write", "Edit", "MultiEdit", "NotebookEdit"} <= tools, sorted(tools)

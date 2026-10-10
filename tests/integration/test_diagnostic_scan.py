@@ -194,6 +194,53 @@ def test_tool_response_changing_its_own_keys_is_reported():
     assert "tool_response keys moved" in context(run(data))
 
 
+# --- failed commands: PostToolUseFailure (F4) -------------------------------
+# A non-zero exit does not fire PostToolUse; it fires PostToolUseFailure, with
+# its own payload, pinned from a live firing in payload_contract_failure.json.
+
+FAILURE_PIN = json.loads((HOOKS / "payload_contract_failure.json").read_text(encoding="utf-8"))
+
+
+def failure_payload(error: str, command: str = "python3 x.py") -> dict:
+    """Exactly the pinned keys of a failed command's payload."""
+    out: dict = {}
+    for k in FAILURE_PIN["top_level_keys"]:
+        if k == "tool_input":
+            out[k] = {kk: "" for kk in FAILURE_PIN["tool_input_keys"]}
+            out[k]["command"] = command
+        elif k == "tool_name":
+            out[k] = "Bash"
+        elif k == "hook_event_name":
+            out[k] = "PostToolUseFailure"
+        elif k == "is_interrupt":
+            out[k] = False
+        elif k == "error":
+            out[k] = error
+        else:
+            out[k] = ""
+    return out
+
+
+def test_the_recorded_failure_contract_carries_the_output_in_error():
+    assert "error" in FAILURE_PIN["top_level_keys"]
+    assert "tool_response" not in FAILURE_PIN["top_level_keys"]
+
+
+def test_a_diagnostic_in_a_failed_command_is_reported_as_a_failure():
+    r = run(failure_payload("Exit code 3\nWARN live\n", command='echo "WARN live"; exit 3'))
+    decision = json.loads(r.stdout)["hookSpecificOutput"]
+    assert decision["hookEventName"] == "PostToolUseFailure"
+    assert "WARN live" in decision["additionalContext"]
+    assert "the command FAILED (exit 3)" in decision["additionalContext"]
+    assert "CONTRACT" not in decision["additionalContext"]
+
+
+@pytest.mark.control("pins precision on failure payloads: a failed command with no diagnostic stays quiet")
+def test_a_failed_command_with_no_diagnostic_stays_quiet():
+    r = run(failure_payload("Exit code 1\n"))
+    assert r.returncode == 0 and r.stdout.strip() == ""
+
+
 # --- robustness: reports, never blocks ------------------------------------
 
 def test_unparseable_input_exits_0_and_says_so():

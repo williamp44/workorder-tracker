@@ -197,6 +197,12 @@ MUTANTS = (
         ")",
     ),
     Mutant(
+        "scan-ignores-failed-commands",
+        ".claude/hooks/diagnostic_scan.py",
+        'if data.get("hook_event_name") == FAILURE_EVENT and "error" in data:',
+        "if False:",
+    ),
+    Mutant(
         "git-hook-allows-add-all",
         ".claude/hooks/guard_git.py",
         'if any(a in ("-A", "--all", "-u", "--update") for a in args):',

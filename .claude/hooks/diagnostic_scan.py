@@ -1,4 +1,5 @@
-"""PostToolUse on Bash: re-surface toolchain diagnostics the reader skipped.
+"""PostToolUse and PostToolUseFailure on Bash|PowerShell: re-surface toolchain
+diagnostics the reader skipped, from commands that passed and that failed.
 
 THE FAILURE IS POSITIONAL, NOT INFORMATIONAL. A diagnostic arrives at the TOP
 of a command's output: it goes to stderr, which prints first, before the
@@ -107,6 +108,9 @@ MAX_LINES = 12
 MAX_LEN = 240
 HERE = pathlib.Path(__file__).resolve().parent
 CONTRACT = HERE / "payload_contract.json"
+# A failed command fires PostToolUseFailure, whose payload has its own shape.
+CONTRACT_FAILURE = HERE / "payload_contract_failure.json"
+FAILURE_EVENT = "PostToolUseFailure"
 
 # Sentinel: the payload had neither `tool_response` nor `tool_output`, so the
 # contract moved. Distinct from "" so it cannot read as a clean run.
@@ -122,16 +126,22 @@ def _shape(data: dict) -> dict:
     }
 
 
+def contract_path(data: dict) -> pathlib.Path:
+    """The pin for this payload's event."""
+    return CONTRACT_FAILURE if data.get("hook_event_name") == FAILURE_EVENT else CONTRACT
+
+
 def record_contract(data: dict) -> dict | None:
     """Record the live payload's SHAPE (key names only, never values)."""
     shape = {
         "recorded": datetime.datetime.now().isoformat(timespec="seconds"),
-        "note": ("Observed shape of the PostToolUse payload. Recorded from a live "
-                 "firing, NOT transcribed from documentation. Delete this file to re-record."),
+        "note": (f"Observed shape of the {data.get('hook_event_name') or 'PostToolUse'} payload. "
+                 "Recorded from a live firing, NOT transcribed from documentation. "
+                 "Delete this file to re-record."),
         **_shape(data),
     }
     try:
-        with io.open(CONTRACT, "w", encoding="utf-8", newline="\n") as fh:
+        with io.open(contract_path(data), "w", encoding="utf-8", newline="\n") as fh:
             json.dump(shape, fh, indent=2)
             fh.write("\n")
     except OSError:
@@ -146,17 +156,18 @@ def check_contract(data: dict) -> list[str]:
     pin is recorded from the live system and the tests are built from it, so
     a payload that moves is reported instead of silently scanned as empty.
     """
-    if not CONTRACT.exists():
+    contract = contract_path(data)
+    if not contract.exists():
         shape = record_contract(data)
         if shape is None:
-            return [f"could not record the payload contract to {CONTRACT.name}"]
-        return [f"recorded a NEW payload contract in .claude/hooks/{CONTRACT.name} "
+            return [f"could not record the payload contract to {contract.name}"]
+        return [f"recorded a NEW payload contract in .claude/hooks/{contract.name} "
                 f"(top-level: {', '.join(shape['top_level_keys'])}). Nothing has validated "
                 f"it yet: confirm extract_output() reads the keys it lists."]
     try:
-        pin = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        pin = json.loads(contract.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        return [f"payload contract {CONTRACT.name} is unreadable ({exc})"]
+        return [f"payload contract {contract.name} is unreadable ({exc})"]
     live = _shape(data)
     notes = []
     gone = [k for k in pin.get("top_level_keys") or [] if k not in live["top_level_keys"]]
@@ -206,7 +217,13 @@ def extract_output(data: dict) -> str:
     carries `tool_response = {"stdout", "stderr", ...}` and no `tool_output`.
     Built from the docs, the guard read "", scanned nothing and reported
     clean. Both shapes are read; neither returns a sentinel, never "".
+
+    A FAILED command fires PostToolUseFailure instead, and its recorded
+    payload carries the output in `error`, with no `tool_response` (F4).
     """
+    if data.get("hook_event_name") == FAILURE_EVENT and "error" in data:
+        err = data["error"]
+        return err if isinstance(err, str) else json.dumps(err)
     tr = data.get("tool_response")
     if isinstance(tr, dict):
         return "\n".join(p for p in (tr.get("stdout") or "", tr.get("stderr") or "") if p)
@@ -236,8 +253,20 @@ def scan(text: str) -> list[tuple[int, str, str]]:
     return hits
 
 
-def render(hits, cmd: str, cmd_hits=(), contract_notes=()) -> str:
-    out = []
+EXIT_LINE = re.compile(r"(?m)^Exit code (-?\d+)\b")
+
+
+def failure_line(data: dict) -> str | None:
+    """`the command FAILED (exit n)` for a failed command; None otherwise.
+    The payload has no exit-code key; the harness writes it into `error`."""
+    if data.get("hook_event_name") != FAILURE_EVENT:
+        return None
+    m = EXIT_LINE.search(data.get("error") or "") if isinstance(data.get("error"), str) else None
+    return f"the command FAILED (exit {m.group(1)})" if m else "the command FAILED"
+
+
+def render(hits, cmd: str, cmd_hits=(), contract_notes=(), failed: str | None = None) -> str:
+    out = [f"{failed}. Its output was scanned too:"] if failed else []
     if contract_notes:
         out.append("PAYLOAD CONTRACT: the guard may be reading the wrong keys, so a quiet run proves nothing:")
         out.extend(f"  !! {n}" for n in contract_notes)
@@ -296,8 +325,8 @@ def main() -> int:
     if not hits and not cmd_hits and not contract_notes:
         return 0
     message = json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PostToolUse",
-        "additionalContext": render(hits, cmd, cmd_hits, contract_notes),
+        "hookEventName": data.get("hook_event_name") or "PostToolUse",
+        "additionalContext": render(hits, cmd, cmd_hits, contract_notes, failure_line(data)),
     }})
     sys.stdout.buffer.write((message + "\n").encode("utf-8"))
     return 0

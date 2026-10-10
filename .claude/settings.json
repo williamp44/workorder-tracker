@@ -47,6 +47,19 @@
           }
         ]
       }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/diagnostic_scan.py\"",
+            "timeout": 15,
+            "statusMessage": "scanning the failed command's output for diagnostics"
+          }
+        ]
+      }
     ]
   }
 }
