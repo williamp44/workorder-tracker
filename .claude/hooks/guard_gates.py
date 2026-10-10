@@ -30,6 +30,7 @@ gate from nothing to doing it visibly.
 
 import json
 import os
+import posixpath
 import sys
 from pathlib import PurePath
 
@@ -83,7 +84,8 @@ def edit_allowed(path: str | None) -> tuple[bool, str]:
         return False, "no file path in the payload, so this hook cannot tell whether a gate is being edited"
     # Casefolded: Windows and macOS file systems ignore case, so .Claude/Hooks
     # is .claude/hooks there (F6). On Linux this also refuses a new RUFF.TOML.
-    parts = PurePath(path.replace("\\", "/").casefold()).parts
+    # `..` collapsed first: `.claude/x/../hooks/f.py` IS a hook (US-019).
+    parts = PurePath(posixpath.normpath(path.replace("\\", "/").casefold())).parts
     for gate in GATES:
         n = len(gate)
         if any(parts[i:i + n] == gate for i in range(len(parts) - n + 1)):

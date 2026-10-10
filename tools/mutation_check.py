@@ -223,8 +223,14 @@ MUTANTS = (
     Mutant(
         "gates-case-sensitive",
         ".claude/hooks/guard_gates.py",
+        'posixpath.normpath(path.replace("\\\\", "/").casefold())',
+        'posixpath.normpath(path.replace("\\\\", "/"))',
+    ),
+    Mutant(
+        "gates-skip-dotdot",
+        ".claude/hooks/guard_gates.py",
+        'PurePath(posixpath.normpath(path.replace("\\\\", "/").casefold())).parts',
         'PurePath(path.replace("\\\\", "/").casefold()).parts',
-        'PurePath(path.replace("\\\\", "/")).parts',
     ),
     Mutant(
         "gates-forget-check-red",

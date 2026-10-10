@@ -139,6 +139,26 @@ def test_the_allowed_rows_of_the_probe_table_stay_editable(path):
     assert load("guard_gates").edit_allowed(path) == (True, "")
 
 
+def test_a_gate_reached_through_dotdot_is_refused():
+    # US-019 (R3-2): `.claude/x/../hooks/guard_git.py` is the gate (checked with
+    # samefile), but its parts never contain (".claude", "hooks").
+    ok, why = load("guard_gates").edit_allowed(".claude/x/../hooks/guard_git.py")
+    assert not ok and why
+
+
+def test_dotdot_that_resolves_to_app_code_is_not_a_gate():
+    # The same fix, other direction: refused on the base, because the parts
+    # still held (".claude", "hooks") although the path resolves to app code.
+    assert load("guard_gates").edit_allowed(".claude/hooks/../../app/services.py") == (True, "")
+
+
+@pytest.mark.control("pins that a gate still matches after collapsing ..; the base refuses these too")
+@pytest.mark.parametrize("path", ["tools/../ruff.toml", "app/../.claude/settings.json"])
+def test_a_gate_after_dotdot_stays_refused(path):
+    ok, why = load("guard_gates").edit_allowed(path)
+    assert not ok and why
+
+
 def test_a_payload_with_no_path_is_refused_not_waved_through():
     ok, _ = load("guard_gates").edit_allowed(None)
     assert not ok
