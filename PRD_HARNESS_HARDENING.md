@@ -113,10 +113,10 @@ GATE_EDIT=1 ./ralph.sh harness_hardening 20 2 sonnet     # from the repo root, o
 
 ## Task Summary
 
-- **Total:** 19 build tasks + 4 review gates = 23 (US-011 to US-015 added 2026-10-09 from the transcript audit; Sprint 4, US-016 to US-019 and its review, added 2026-10-10)
-- **Progress:** 22/23 closed: 17 build tasks built, US-009 skipped by decision, 4 reviews passed or recorded; US-015 partial (Step 3 done, Steps 1-2 blocked on a person)
-- **Status:** Done except US-015 Steps 1-2; open issues in "Open review issues" at the end of this file
-- **Next Task:** person-only items: US-020 (live R1-1 check), US-021 (decide US-015), H-1 (review, push, read CI); see Sprint 5
+- **Total:** 21 build tasks + 5 review gates = 26 (US-011 to US-015 added 2026-10-09 from the transcript audit; Sprint 4, US-016 to US-019 and its review, added 2026-10-10; Sprint 6, US-022, US-023 and its review, added 2026-10-10 from PR 5)
+- **Progress:** 22/26 closed: 17 build tasks built, US-009 skipped by decision, 4 reviews passed or recorded; US-015 partial (Step 3 done, Steps 1-2 blocked on a person)
+- **Status:** Sprint 6 not started; open issues in "Open review issues" at the end of this file
+- **Next Task:** US-022 (agent, needs `GATE_EDIT=1`). Person-only items: US-020, US-021, H-1 (review the gates, read PR 5's CI); see Sprint 5
 
 ## Task Dependencies
 
@@ -793,6 +793,9 @@ evidence available: every shell command in all 6 agent transcripts for this repo
   1. Review `git diff main..harness-hardening -- .claude tools` (9 files, +910/-117). Every edit was made under
      `GATE_EDIT=1`.
   2. Push: `git push -u origin harness-hardening`. Open a PR so `check_red` runs against `origin/main`.
+     **Done 2026-10-10:** [PR 5](https://github.com/williamp44/workorder-tracker/pull/5). The branch was rewritten
+     to author `William T. Pape <wtpape@gmail.com>` (trees, messages and author dates identical) and force-pushed
+     with a lease, `e0c9857` → `e0aa7cd`. The old history is kept locally as `backup/harness-hardening-before-author`.
   3. Watch for:
      - the SQLite leg's mutation step: 54 mutants, so expect about 15-30 min;
      - any test that assumed Windows. None found by grep, but this is the first Linux run.
@@ -805,3 +808,94 @@ evidence available: every shell command in all 6 agent transcripts for this repo
 - **R2-2:** frozen at 362 lines. No split.
 - **Making `diagnostic_scan` warn on truncation again:** retired in US-015 Step 3 (7 warned uses, 0 changes). The
   58-of-349 frequency does not change that: a warning was read past every time.
+
+---
+
+## Sprint 6: US-013's first real outing, found on PR 5 (2026-10-10)
+**Status:** NOT STARTED
+
+**Found by:** the author rewrite of PR 5. `git rebase main --exec 'git commit --amend --author=…'` rewrote the
+branch with every tree identical (`git diff --quiet e0c9857 HEAD` → trees match). `diagnostic_scan` then
+reported:
+
+    Python files written through a shell (post_edit_check did not see these):
+      ... and 7 more file(s) not checked
+
+Two defects:
+
+1. **False positive.** `recently_written()` judges by mtime alone. A rebase, checkout, merge, stash, reset or
+   pull rewrites files with **identical** content but a new mtime. Right after the rebase, `git status --short`
+   printed nothing: every one of those files matched HEAD.
+2. **Unreadable message.** `shell_written()` returns only post_edit_check's *findings*. The first `MAX_WRITTEN`
+   (5) files were checked and were clean, so they added no lines. The 7 unchecked files became the bare
+   "… and 7 more". The header sat over an empty list, and no file was ever named, checked or not.
+
+- [ ] **US-022** Judge shell-written Python by content, not mtime (~25 min, ~60 lines) [depends: US-013]
+- [ ] **US-023** Name every file the shell check saw, checked or not (~10 min, ~25 lines) [depends: US-022]
+- [ ] **US-REVIEW-S6** Sprint 6 Review 🚧 GATE (~5 min) [depends: US-022, US-023]
+
+### US-022: Judge shell-written Python by content, not mtime (~25 min, ~60 lines)
+
+**Mechanism (decided):** decide on what git says the content is, not on the command name. A list of
+"tree-rewriting commands" would be a regex arms race, which is the lesson of R3-2 and the `| grep` blind spot.
+
+A recently modified `.py` file is a candidate only if one of these holds:
+- (a) **it differs from HEAD:** it is listed by `git status --porcelain --untracked-files=all -- <file>`, as
+  modified, added or untracked; or
+- (b) **a plain commit in this command's window changed it.** Every reflog entry newer than the window start
+  (`git reflog --format='%gs %ct'`, with `%ct` ≥ `since`) starts with `commit:` or `commit (initial):`, and none
+  falls inside a `rebase (start)` … `rebase (finish)` span. Then use `git diff --name-only HEAD@{n} HEAD`, where
+  n is the number of those entries.
+  - This covers `cat > x.py && git commit`, a shell write committed in the same command.
+  - Not covered: `commit (amend)` inside a rebase. This repo's reflog shows `rebase (pick)` → `commit (amend)` →
+    `rebase (finish)` for the PR 5 rewrite.
+
+Outside a git work tree, or if `git` fails, fall back to the mtime rule and say so in the message. A check that
+cannot judge does not pass silently.
+
+**Probe table → tests** (temp git repo, `duration_ms` set to cover the action):
+
+| Action in the window | Want |
+| --- | --- |
+| `printf 'import os\n' > new.py` (untracked) | reported, with F401 |
+| Modify tracked `a.py` through the shell, uncommitted | reported |
+| `printf … > b.py && git add b.py && git commit -m x` | reported (rule b) |
+| `git rebase` / `git commit --amend --author=…` with trees identical | **not reported** |
+| `git checkout other-branch` (files differ by branch, but match the new HEAD) | not reported |
+| `git stash` then `git stash pop` | reported only if the popped file is dirty after the pop (rule a) |
+| `touch a.py` (mtime only, content clean) | not reported |
+| Not a git repo, fresh `bad.py` | reported, with "(not a git work tree: judged by mtime)" |
+
+**Mutants:** `shell-check-ignores-git-state` (rule a/b removed, back to mtime only) and
+`shell-check-misses-same-command-commit` (rule b removed).
+
+**Acceptance Criteria:**
+- The rebase row and the `touch` row are RED on the current branch, which reports them. Paste the output.
+- **Live:** run the PR 5 shape on a throwaway branch: `git rebase HEAD~3 --exec 'git commit --amend --no-edit'`
+  produces no "written through a shell" context. Then `printf 'import os\n' > scratch_probe.py` still reports
+  F401. Delete both after.
+
+### US-023: Name every file the shell check saw (~10 min, ~25 lines)
+
+**Implementation:**
+- `shell_written()` returns one line per candidate file:
+  - `path: N finding(s)` followed by the findings,
+  - `path: clean`, or
+  - `path: not checked (over the limit of MAX_WRITTEN)`.
+- The header states the counts, e.g. `3 Python file(s) written through a shell: 1 with findings, 1 clean, 1 not
+  checked`.
+- Precision: when every candidate is clean, report nothing. A clean result is not news, and US-022 already keeps
+  rewrites out.
+- Test: 7 candidates with the limit at 5 and one finding. All 7 paths appear in the message, and no line is
+  `... and N more` without names. RED today.
+- Mutant: `shell-check-hides-unchecked-names`.
+
+**Acceptance Criteria:** test RED first; the mutation check kills everything; the message from the probe-table
+run is pasted into the progress file.
+
+### US-REVIEW-S6: Sprint 6 Review 🚧 GATE (~5 min)
+
+1. Full gate run on a clean worktree, pasted.
+2. Replay the 347-command yardstick: count `written through a shell` reports before and after. Every report that
+   disappears must be a tree-identical rewrite, never a real shell write.
+3. `<review-passed/>` or `<review-issues-found/>`; commit `"docs: US-REVIEW-S6 complete"`.
