@@ -79,6 +79,8 @@ def denied(decision: dict | None) -> bool:
 # within one second matched both, and a hook ran its OLD code. -B stops a
 # process writing .pyc, not reading it, so no writer may leave one behind.
 
+@pytest.mark.control("pins the test helpers' own -B and no-bytecode import; only test code can make it "
+                     "RED, so check_red cannot; mutant test-helpers-write-bytecode proves it can fail")
 def test_running_and_importing_hooks_leaves_no_bytecode_behind(tmp_path):
     hooks = tmp_path / "hooks"
     shutil.copytree(HOOKS, hooks, ignore=shutil.ignore_patterns("__pycache__", ".fired.log"))
