@@ -431,13 +431,13 @@ parser or OS resolution).
 
 | Command | Gap |
 | --- | --- |
-| `git reset --har`, `git clean --forc`, `git checkout --forc b`, `git switch --disc b` | git accepts abbreviated long options |
-| `git checkout -qf b`, `git checkout -fq`, `git switch -qf b` | `-f` matched exactly, not inside a short cluster |
+| `git reset --har`, `git clean --forc`, `git checkout --forc b`, `git switch --disc b` | git accepts abbreviated long options. **FIXED, US-017 (57cb919)** |
+| `git checkout -qf b`, `git checkout -fq`, `git switch -qf b` | `-f` matched exactly, not inside a short cluster. **FIXED, US-017 (57cb919)** |
 | `git checkout HEAD :/`, `git checkout HEAD '*.txt'`, `git checkout HEAD f*` | pathspec magic and globs fail the `os.path.exists` test |
 | `git checkout --pathspec-from-file=F HEAD` (also `restore`, and `=-`) | paths not on the command line |
 | `git read-tree -u --reset HEAD`, `git checkout-index -f -a` | plumbing discard forms |
 | `git diff \| git apply -R`, `git apply -R p` | reverse-apply discards |
-| `git rm -f f.txt`, `git rm -rf sub`, `git mv -f a b` | forced rm/mv over dirty files |
+| `git rm -f f.txt`, `git rm -rf sub`, `git mv -f a b` | forced rm/mv over dirty files. **`git rm` FIXED, US-018 (577a9a3)**; `git mv -f` still open |
 | `git worktree remove --force <wt>` | an untracked file in the worktree |
 | `git reset --hard>/dev/null` | a redirect glued to the word |
 | `time`, `nice`, `nohup`, `timeout 20`, `xargs`, `FOO=1`, `GIT_DIR=.git` before git | prefixes and assignments not unwrapped |
@@ -465,7 +465,7 @@ parser or OS resolution).
 
 | Path | Gap |
 | --- | --- |
-| `.claude/x/../hooks/guard_git.py` | `..` not collapsed before matching |
+| `.claude/x/../hooks/guard_git.py` | `..` not collapsed before matching. **FIXED, US-019 (a89e48f)** |
 | `ruff.toml.`, `ruff.toml ` (trailing dot/space), `.claude./hooks/...` | Windows strips trailing dots and spaces |
 | `ruff.toml::$DATA` | NTFS alternate data stream |
 | NotebookEdit with a harmless `file_path` and a gate `notebook_path` | only `file_path` is judged when both are present |
@@ -490,3 +490,30 @@ checkout with `--`, `HEAD -- f.txt`, `other f.txt`, `HEAD sub/`, `-p`, `-f`/`--f
 trailing `&`, `2>&1`, `*> $null`; PowerShell `& 'git'`, `| Out-Null`, backtick continuation, `cmd.exe /C`,
 `pwsh -c`, `powershell -Command`; guard_gates case variants, backslashes, `\\?\`, UNC, `/c/...`,
 `tests/./conftest.py`, `GUARD_~2.PY` inside `.claude/hooks`.
+
+## Sprint 4 re-probe (US-REVIEW-S4, 2026-10-10)
+
+The fresh reviewer's rows for US-017 to US-019, re-run through the live hooks at `a89e48f` with `GATE_EDIT` unset, against a throwaway repo (sub/x.txt dirty, u.txt untracked):
+
+```
+DENY   guard_git    'git reset --har'                 
+DENY   guard_git    'git reset --ha HEAD'             
+DENY   guard_git    'git clean --forc'                
+DENY   guard_git    'git clean --fo -x'               
+DENY   guard_git    'git checkout --forc main'        
+DENY   guard_git    'git switch --disc main'          
+DENY   guard_git    'git checkout -qf main'           
+DENY   guard_git    'git checkout -fq'                
+DENY   guard_git    'git switch -qf main'             
+DENY   guard_git    'git rm -f sub/x.txt'             
+DENY   guard_git    'git rm --force sub/x.txt'        
+DENY   guard_git    'git rm -rf sub'                  
+allow  guard_git    'git checkout -bfix'              
+allow  guard_git    'git rm --cached sub/x.txt'       
+allow  guard_git    'git rm -f f.txt'                 
+allow  guard_git    'git switch --detach main'        
+DENY   guard_gates  '.claude/x/../hooks/guard_git.py' 
+allow  guard_gates  '.claude/hooks/../../app/services.py'
+allow  guard_gates  'app/services.py'                 
+mismatches: 0 of 19
+```

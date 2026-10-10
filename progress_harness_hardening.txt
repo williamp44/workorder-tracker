@@ -577,3 +577,62 @@ Waiting on a gate edit: settings.json `python3 -B` (6 commands), its test
 removed so the branch stays green), and the two mutants. US-017, US-018 and US-019 are
 all gate edits (guard_git.py, guard_gates.py, mutation_check.py).
 To unblock: relaunch Claude Code with GATE_EDIT=1, as P-1 requires.
+
+## Sprint 4 resumed (2026-10-10): session relaunched with GATE_EDIT=1
+Verified: bash `GATE_EDIT=[1]`; PowerShell process-level [1], user-level [] (scoped to the launch);
+guard_gates on a piped ruff.toml edit -> "allowed by GATE_EDIT=1".
+
+## US-016 Hooks never run stale bytecode (8ecd80b tests, 5106b7a settings, 8675216 control)
+RED: test_every_hook_script_is_launched_without_writing_bytecode -> all 5 hook commands lacked -B.
+Live: with __pycache__ deleted and every hook firing many times since:
+    ls: cannot access '.claude/hooks/__pycache__': No such file or directory
+Cost: guard_git 125 ms/call with -B vs 123 ms without (mean of 10).
+CORRECTION: I recorded test_running_and_importing_hooks_leaves_no_bytecode_behind as
+"RED on the base". check_red said otherwise on every Sprint 4 commit:
+    FAIL test_hooks::test_running_and_importing_hooks_leaves_no_bytecode_behind passed before the change
+What it checks lives in the test helpers, which arrive with the test, so only test code can make it
+RED (as with CHECKS instrument defect 7). It is now a @control with that reason (8675216). Mutant
+test-helpers-write-bytecode is killed, so it can fail. The mutant shell-hooks-skip-powershell was
+updated for the new guard_git command text.
+STATUS: US-016 [x] VERIFIED
+
+## US-017 Abbreviated long options and -qf clusters (57cb919)
+RED: 9 of 9 deny rows; 4 allow rows (-bfix, -q, --detach, --har on a clean tree) @control.
+Mutants git-hook-misses-abbreviated-options and git-hook-misses-f-in-cluster added;
+git-hook-allows-reset-hard retargeted.
+STATUS: US-017 [x] VERIFIED
+
+## US-018 git rm -f over uncommitted work (577a9a3)
+RED: 4 of 4 deny rows; 3 allow rows (--cached, -f on a clean file, rm without -f) @control.
+Mutant git-hook-allows-rm-force added.
+STATUS: US-018 [x] VERIFIED
+
+## US-019 guard_gates collapses .. (a89e48f)
+RED: 2 (the gate through `..` was allowed; `.claude/hooks/../../app/services.py` was falsely denied).
+`tools/../ruff.toml` and `app/../.claude/settings.json` were already denied: @control.
+Mutant gates-skip-dotdot added; gates-case-sensitive retargeted.
+Live, incidentally: guard_gates crashed between two edits (NameError: posixpath) and, under
+GATE_EDIT=1, allowed the repairing edit with "guard_gates crashed (...); edit allowed by GATE_EDIT=1
+so the hook can be repaired": US-011's crash path, fired live.
+STATUS: US-019 [x] VERIFIED
+
+## Gate runs per Sprint 4 commit (clean worktrees, GATE_EDIT unset)
+    5106b7a: pytest 368 | mutation 50 of 50 | check_red FAIL (the control above, then fixed)
+    57cb919: pytest 383 | mutation 52 of 52 | check_red FAIL (same)
+    577a9a3: pytest 391 | mutation 53 of 53 | check_red FAIL (same)
+    a89e48f: pytest 396 | mutation 54 of 54 | check_red FAIL (same)
+    8675216 (final): ruff All checks passed! | check_types INFO 0 diagnostics (4 suppressed) / 0 |
+      check_fp 0 finding(s) | pytest 396 passed in 26.60s |
+      check_red 185 new test(s), 44 declared control(s); OK all 141 new test(s) were RED on the base code |
+      mutation OK control passed, equivalent canary survived, 54 of 54 mutants killed
+
+## US-REVIEW-S4
+1. Full gates @8675216: above, all green.
+2. The reviewer's rows for US-017..US-019 re-run through the live hooks (scratchpad/probe_s4.py):
+   mismatches: 0 of 19 (16 guard_git, 3 guard_gates). Pasted into the evidence file.
+3. No .claude/hooks/__pycache__ after the suite and live firings (US-016).
+4. Evidence file: the R3-2 rows marked FIXED (US-017/018/019); `git mv -f` stays open.
+5. Open review issues in the PRD updated.
+Also: the two reviewer-agent assessments are saved to docs/evidence/harness_value_assessment_2026-10-10.md.
+guard_git.py is now 362 lines (R2-2; Decision 3: accept the growth).
+<review-passed/>

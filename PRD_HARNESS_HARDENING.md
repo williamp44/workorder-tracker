@@ -113,10 +113,10 @@ GATE_EDIT=1 ./ralph.sh harness_hardening 20 2 sonnet     # from the repo root, o
 
 ## Task Summary
 
-- **Total:** 15 build tasks + 3 review gates = 18 (US-011 to US-015 added 2026-10-09 from the transcript audit; they sit before US-REVIEW-S2)
-- **Progress:** 17/18 complete (94%); US-015 partial (Steps 1-2 blocked on a person)
-- **Status:** Done except US-015 Steps 1-2; review issues R2-1..R3-2 open (progress file)
-- **Next Task:** US-015 Steps 1-2 (needs a person: the probe hook edit was refused by auto mode)
+- **Total:** 19 build tasks + 4 review gates = 23 (US-011 to US-015 added 2026-10-09 from the transcript audit; Sprint 4, US-016 to US-019 and its review, added 2026-10-10)
+- **Progress:** 22/23 closed: 17 build tasks built, US-009 skipped by decision, 4 reviews passed or recorded; US-015 partial (Step 3 done, Steps 1-2 blocked on a person)
+- **Status:** Done except US-015 Steps 1-2; open issues in "Open review issues" at the end of this file
+- **Next Task:** US-015 Steps 1-2 (needs a person: the probe hook edit was refused by auto mode; or close it as not built, see the assessment)
 
 ## Task Dependencies
 
@@ -591,18 +591,18 @@ Skip and mark `[x] SKIPPED (no decision)` unless a person has approved it in `pr
 
 ---
 
-## Open review issues (as of 67718ee, 2026-10-10)
+## Open review issues (updated after Sprint 4, 8675216, 2026-10-10)
 
 Each of the three sprint reviews ends in `<review-issues-found/>` (`progress_harness_hardening.txt`). Still open:
 
 * US-015 Steps 1-2, blocked on a person: auto mode refused the edit that registers the throwaway `updatedInput` probe hook (R2-1).
-* `guard_git.py` at 325 lines, against a target of about 250 (R2-2).
-* The stale `.pyc` risk: a hook can run old code after a quick same-size edit (R2-3).
-* The ~30 bypasses the fresh reviewer found, recorded but not fixed (R3-2; `docs/evidence/harness_probes_2026-10-09.md`, section "US-REVIEW-S3: fresh-reviewer probe").
+* `guard_git.py` at 362 lines after Sprint 4, against a target of about 250 (R2-2; Decision 3: growth accepted).
+* ~~The stale `.pyc` risk (R2-3)~~ FIXED by US-016: hooks and test helpers run with `-B`; no `__pycache__` is written.
+* The ~30 bypasses the fresh reviewer found (R3-2): the cheap ones (abbreviated options, `-qf`, `git rm -f`, `..`) are FIXED by US-017 to US-019; the rest stay recorded limits ( `docs/evidence/harness_probes_2026-10-09.md`, section "US-REVIEW-S3: fresh-reviewer probe").
 * The `python3` warning (R1-1) not yet seen firing on a machine without Python.
 * CI not run, because the branch is not pushed.
 
-## Follow-up Sprint 4: cheap rows and stale bytecode (DRAFT, not started)
+## Follow-up Sprint 4: cheap rows and stale bytecode (DONE 2026-10-10, review passed)
 
 **Why only these.** The post-session assessment found that the outcome gates (check_red, mutation, pytest, ruff) carry the
 assurance, and that `guard_git`, a hand-rolled shell parser, cannot be closed row by row: the reviewer's own stated limits
@@ -624,11 +624,11 @@ Everything else in R3-2 stays a recorded limit.
 `GATE_EDIT=1`; full gates run on a clean worktree of each task's commit, with `GATE_EDIT` unset; check_red after the
 commit; never `git add -A`.
 
-- [ ] **US-016** Hooks never run stale bytecode (R2-3) (~20 min, ~40 lines)
-- [ ] **US-017** guard_git: abbreviated long options and `-qf` clusters (~25 min, ~60 lines)
-- [ ] **US-018** guard_git: `git rm -f` over uncommitted work (~15 min, ~40 lines)
-- [ ] **US-019** guard_gates: collapse `..` before matching (~10 min, ~15 lines)
-- [ ] **US-REVIEW-S4** Sprint 4 Review 🚧 GATE (~10 min) [depends: US-016..US-019]
+- [x] **US-016** Hooks never run stale bytecode (R2-3) (~20 min, ~40 lines)
+- [x] **US-017** guard_git: abbreviated long options and `-qf` clusters (~25 min, ~60 lines)
+- [x] **US-018** guard_git: `git rm -f` over uncommitted work (~15 min, ~40 lines)
+- [x] **US-019** guard_gates: collapse `..` before matching (~10 min, ~15 lines)
+- [x] **US-REVIEW-S4** Sprint 4 Review 🚧 GATE (~10 min) [depends: US-016..US-019]
 
 ### US-016: Hooks never run stale bytecode (R2-3)
 
