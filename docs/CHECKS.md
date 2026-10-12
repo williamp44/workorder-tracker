@@ -299,7 +299,7 @@ the working copy's code.
 
 ### Mutation check
 
-At `8d8fc99` (US-008), on a clean worktree of that commit:
+At `18d53f1`, from CI run [38149872263](https://github.com/williamp44/workorder-tracker/actions/runs/38149872263) (SQLite leg):
 
 ```
 $ python -m tools.mutation_check
@@ -327,12 +327,15 @@ $ python -m tools.mutation_check
   gate-hook-forgets-settings-local     pytest exit 1
   gate-override-accepts-any-value      pytest exit 1
   shell-hooks-skip-powershell          pytest exit 1
+  hooks-write-bytecode                 pytest exit 1
+  test-helpers-write-bytecode          pytest exit 1
   gate-hook-skips-notebooks            pytest exit 1
   post-edit-drops-interpreter-path     pytest exit 1
   check-types-drops-interpreter-path   pytest exit 1
   scan-ignores-failed-commands         pytest exit 1
   python3-check-silent                 pytest exit 1
   gates-case-sensitive                 pytest exit 1
+  gates-skip-dotdot                    pytest exit 1
   gates-forget-check-red               pytest exit 1
   post-edit-forgets-hook-siblings      pytest exit 1
   git-hook-ignores-global-options      pytest exit 1
@@ -340,6 +343,9 @@ $ python -m tools.mutation_check
   git-hook-runs-heredoc-subshells      pytest exit 1
   git-hook-allows-checkout-without-dashdash pytest exit 1
   git-hook-allows-reset-hard           pytest exit 1
+  git-hook-allows-rm-force             pytest exit 1
+  git-hook-misses-abbreviated-options  pytest exit 1
+  git-hook-misses-f-in-cluster         pytest exit 1
   git-hook-ignores-cd                  pytest exit 1
   git-hook-ignores-repo-aliases        pytest exit 1
   git-hook-denies-index-only-restore   pytest exit 1
@@ -347,19 +353,24 @@ $ python -m tools.mutation_check
   gate-hook-crash-blocks-override      pytest exit 1
   post-edit-judges-outside-files       pytest exit 1
   shell-written-python-unchecked       pytest exit 1
+  shell-check-ignores-git-state        pytest exit 1
+  shell-check-misses-same-command-commit pytest exit 1
+  shell-check-hides-unchecked-names    pytest exit 1
   commit-gated-on-filter-allowed       pytest exit 1
   contract-alarms-on-added-keys        pytest exit 1
   scan-misses-pyrefly-error            pytest exit 1
+  contract-alarms-on-headless-sessions pytest exit 1
   git-hook-allows-add-all              pytest exit 1
   migration-default-drifts-from-model  pytest exit 1
-OK   control passed, equivalent canary survived, 47 of 47 mutants killed
+OK   control passed, equivalent canary survived, 57 of 57 mutants killed
 ```
 
 ### Tests
 
 ```
-$ pytest -q
-362 passed in 25.22s
+$ pytest -v      # CI run 38149872263, both legs, at 18d53f1
+409 passed in 15.49s   (SQLite)
+409 passed in 14.60s   (MariaDB)
 ```
 
 The verdict reads pytest's exit code, never its output. Exit 1 means tests
@@ -412,10 +423,10 @@ Every new test must fail against the code before the change. This branch
 against `main`:
 
 ```
-$ python -m tools.check_red --base main      # branch harness-hardening at 8d8fc99
+$ python -m tools.check_red --base origin/main   # CI run 38149872263, at 18d53f1
   base 8209a76f  head HEAD
-  151 new test(s), 34 declared control(s)
-OK   all 117 new test(s) were RED on the base code
+  198 new test(s), 49 declared control(s)
+OK   all 149 new test(s) were RED on the base code
 ```
 
 The same tool, run over the earlier commits:

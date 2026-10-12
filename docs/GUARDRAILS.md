@@ -34,7 +34,7 @@ code, and it has to be shown able to fail.
 | --- | --- | --- |
 | **State the oracle before the change.** | A result seen first gets rationalised. A result predicted first gets checked. | `tools/check_red.py` fails a pull request if any new test already passes on the base branch's code. |
 | **The oracle must not be derived from the code under test.** | A test generated from the code shares the code's mistakes. | The transition spec in `tests/spec.py` is written out by hand. The first draft derived it from the table under test, so a wrong table produced matching wrong tests that passed. |
-| **Prove the oracle can fail.** | A check that has only ever been green has proved nothing. It may never reach the code. | `tools/mutation_check.py` injects 47 bugs (`python -m tools.mutation_check` → `47 of 47 mutants killed`, at `8d8fc99`; full output in CHECKS.md). Each must turn the suite red. |
+| **Prove the oracle can fail.** | A check that has only ever been green has proved nothing. It may never reach the code. | `tools/mutation_check.py` injects 57 bugs (`python -m tools.mutation_check` → `57 of 57 mutants killed`, at `18d53f1` in CI run 38149872263; full output in CHECKS.md). Each must turn the suite red. |
 | **Check the checker.** | An instrument is code and has code's defect rate. | A mutant that changes no behaviour must *survive*. When the mutation tool's own self-test was killing every mutant, this canary is what exposes it (CHECKS.md, instrument defect 2). |
 | **Measure a rule before trusting it.** | A plausible rule that is noisy gets switched off within a week, and takes the good rules with it. | Every check had to show two numbers before gating CI: does it fire on the known defects, and is it quiet on the current tree. |
 
