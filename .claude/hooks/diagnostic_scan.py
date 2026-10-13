@@ -1,4 +1,5 @@
-"""PostToolUse on Bash: re-surface toolchain diagnostics the reader skipped.
+"""PostToolUse and PostToolUseFailure on Bash|PowerShell: re-surface toolchain
+diagnostics the reader skipped, from commands that passed and that failed.
 
 THE FAILURE IS POSITIONAL, NOT INFORMATIONAL. A diagnostic arrives at the TOP
 of a command's output: it goes to stderr, which prints first, before the
@@ -28,8 +29,7 @@ TWO SCANS.
      docs say, see extract_output): high-precision toolchain diagnostics.
   2. COMMAND (`tool_input.command`): hazards that let a command appear to
      succeed while hiding or skipping something, which no output pattern can
-     see. A heredoc body carrying backslashes, and stderr merged into stdout
-     and then cut down with tail or head.
+     see: a heredoc body carrying backslashes.
 
 PRECISION OVER RECALL. A guard that fires on a passing run teaches the reader
 to ignore it, recreating the defect one level up. Bare `fail` is not a
@@ -41,12 +41,15 @@ Exit 0 always: it reports, it never blocks. Ported from host6
 """
 
 import datetime
+import importlib.util
 import io
 import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
+import time
 
 # Unsolicited toolchain diagnostics: something a tool emitted that the
 # operator did not ask for, not a verdict the operator's own code printed.
@@ -64,6 +67,9 @@ PATTERNS = (
     (r"(?m)^\s*(?:warning|error|fatal error|fatal)\s*:", "compiler-style diagnostic"),
     # Incident here: pyrefly's `WARN Skipping include pattern .claude/hooks`.
     (r"(?m)^\s*(?:WARN|WARNING)\b", "a tool logged a warning"),
+    # F8: pyrefly's `ERROR Cannot find module ...` (40+ lines in one output,
+    # during F3) matched nothing. Its clean verdict is `INFO 0 errors`.
+    (r"(?m)^\s*ERROR\b", "a tool logged an error"),
     (r"(?m)^\s*npm ERR!", "npm error"),
     (r"error\[E\d+\]", "rustc error"),
     (r"(?m)\berror TS\d+\b", "TypeScript error"),
@@ -84,13 +90,12 @@ COMMAND_HAZARDS = (
      "patch script aborts before writing and the surrounding command still "
      "prints a plausible success. Confirm the file actually changed before "
      "believing it; prefer the Write/Edit tools for source."),
-    ("stderr_merged_then_truncated",
-     "this command merges stderr into stdout (2>&1) and then keeps only part of "
-     "it with tail or head. Diagnostics print FIRST, at the top; the summary "
-     "prints last. This is exactly how a pyrefly WARN saying the hooks were "
-     "never checked was thrown away in this repo. Read the whole output, or "
-     "drop the truncation."),
 )
+# Retired (US-015 Step 3): `stderr_merged_then_truncated`, a warning on
+# `2>&1 | tail/head`. Measured over one run: 7 warned uses, 0 behaviour
+# changes, and 17 `2>&1 | grep` uses it never saw. A warning that is read
+# past teaches the reader to ignore hooks. The part that mattered, a commit
+# gated on the filter's exit status, is refused by guard_git (US-014).
 
 # The operator's own verdict lines. Checked FIRST; a match suppresses the line.
 BENIGN = (
@@ -107,6 +112,15 @@ MAX_LINES = 12
 MAX_LEN = 240
 HERE = pathlib.Path(__file__).resolve().parent
 CONTRACT = HERE / "payload_contract.json"
+# A failed command fires PostToolUseFailure, whose payload has its own shape.
+CONTRACT_FAILURE = HERE / "payload_contract_failure.json"
+FAILURE_EVENT = "PostToolUseFailure"
+# Pinned from a Bash payload, but absent from every PowerShell one (found
+# live in US-001). The guard never reads it.
+OPTIONAL_RESPONSE_KEYS = frozenset({"noOutputExpected"})
+# Pinned from an interactive session, absent from every headless (`claude -p`)
+# one, so every call in a ralph.sh run alarmed (found live in US-REVIEW-S3).
+OPTIONAL_TOP_LEVEL_KEYS = frozenset({"scratchpad_dir"})
 
 # Sentinel: the payload had neither `tool_response` nor `tool_output`, so the
 # contract moved. Distinct from "" so it cannot read as a clean run.
@@ -122,16 +136,22 @@ def _shape(data: dict) -> dict:
     }
 
 
+def contract_path(data: dict) -> pathlib.Path:
+    """The pin for this payload's event."""
+    return CONTRACT_FAILURE if data.get("hook_event_name") == FAILURE_EVENT else CONTRACT
+
+
 def record_contract(data: dict) -> dict | None:
     """Record the live payload's SHAPE (key names only, never values)."""
     shape = {
         "recorded": datetime.datetime.now().isoformat(timespec="seconds"),
-        "note": ("Observed shape of the PostToolUse payload. Recorded from a live "
-                 "firing, NOT transcribed from documentation. Delete this file to re-record."),
+        "note": (f"Observed shape of the {data.get('hook_event_name') or 'PostToolUse'} payload. "
+                 "Recorded from a live firing, NOT transcribed from documentation. "
+                 "Delete this file to re-record."),
         **_shape(data),
     }
     try:
-        with io.open(CONTRACT, "w", encoding="utf-8", newline="\n") as fh:
+        with io.open(contract_path(data), "w", encoding="utf-8", newline="\n") as fh:
             json.dump(shape, fh, indent=2)
             fh.write("\n")
     except OSError:
@@ -146,36 +166,38 @@ def check_contract(data: dict) -> list[str]:
     pin is recorded from the live system and the tests are built from it, so
     a payload that moves is reported instead of silently scanned as empty.
     """
-    if not CONTRACT.exists():
+    contract = contract_path(data)
+    if not contract.exists():
         shape = record_contract(data)
         if shape is None:
-            return [f"could not record the payload contract to {CONTRACT.name}"]
-        return [f"recorded a NEW payload contract in .claude/hooks/{CONTRACT.name} "
+            return [f"could not record the payload contract to {contract.name}"]
+        return [f"recorded a NEW payload contract in .claude/hooks/{contract.name} "
                 f"(top-level: {', '.join(shape['top_level_keys'])}). Nothing has validated "
                 f"it yet: confirm extract_output() reads the keys it lists."]
     try:
-        pin = json.loads(CONTRACT.read_text(encoding="utf-8"))
+        pin = json.loads(contract.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        return [f"payload contract {CONTRACT.name} is unreadable ({exc})"]
+        return [f"payload contract {contract.name} is unreadable ({exc})"]
     live = _shape(data)
     notes = []
-    gone = [k for k in pin.get("top_level_keys") or [] if k not in live["top_level_keys"]]
-    added = [k for k in live["top_level_keys"] if k not in (pin.get("top_level_keys") or [])]
-    if gone or added:
-        notes.append("the hook payload SHAPE MOVED since it was pinned"
-                     + (f"; keys gone: {', '.join(gone)}" if gone else "")
-                     + (f"; keys new: {', '.join(added)}" if added else "")
-                     + ". Re-read extract_output() before trusting a quiet run.")
+    # Only a LOSS is reported (US-007). Every alarm seen live was an added key
+    # (persistedOutputPath, backgroundTaskId, bashEditDiff, ...), all benign,
+    # and a guard that cries wolf is read past.
+    gone = [k for k in pin.get("top_level_keys") or []
+            if k not in live["top_level_keys"] and k not in OPTIONAL_TOP_LEVEL_KEYS]
+    if gone:
+        notes.append(f"the hook payload SHAPE MOVED since it was pinned; keys gone: "
+                     f"{', '.join(gone)}. Re-read extract_output() before trusting a quiet run.")
     pinned_tr, live_tr = pin.get("tool_response_keys"), live["tool_response_keys"]
-    if pinned_tr is not None and live_tr is not None and pinned_tr != live_tr:
-        notes.append(f"tool_response keys moved: pinned {pinned_tr}, live {live_tr}")
+    lost_tr = [k for k in pinned_tr or [] if k not in (live_tr or []) and k not in OPTIONAL_RESPONSE_KEYS]
+    if pinned_tr is not None and live_tr is not None and lost_tr:
+        notes.append(f"tool_response keys moved: lost {lost_tr}; pinned {pinned_tr}, live {live_tr}")
     elif pinned_tr is not None and live_tr is None:
         notes.append(f"tool_response is no longer a dict of {pinned_tr}")
     return notes
 
 
 HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
-MERGED_THEN_CUT = re.compile(r"2>&1\s*\|\s*(?:tail|head)\b(?!\s+-[fF]\b)")
 
 
 def heredoc_bodies(cmd: str):
@@ -194,8 +216,6 @@ def scan_command(cmd: str) -> list[str]:
     hits = []
     if any("\\" in body for body in heredoc_bodies(cmd)):
         hits.append("heredoc_backslash")
-    if MERGED_THEN_CUT.search(cmd):
-        hits.append("stderr_merged_then_truncated")
     return hits
 
 
@@ -206,7 +226,13 @@ def extract_output(data: dict) -> str:
     carries `tool_response = {"stdout", "stderr", ...}` and no `tool_output`.
     Built from the docs, the guard read "", scanned nothing and reported
     clean. Both shapes are read; neither returns a sentinel, never "".
+
+    A FAILED command fires PostToolUseFailure instead, and its recorded
+    payload carries the output in `error`, with no `tool_response` (F4).
     """
+    if data.get("hook_event_name") == FAILURE_EVENT and "error" in data:
+        err = data["error"]
+        return err if isinstance(err, str) else json.dumps(err)
     tr = data.get("tool_response")
     if isinstance(tr, dict):
         return "\n".join(p for p in (tr.get("stdout") or "", tr.get("stderr") or "") if p)
@@ -236,8 +262,24 @@ def scan(text: str) -> list[tuple[int, str, str]]:
     return hits
 
 
-def render(hits, cmd: str, cmd_hits=(), contract_notes=()) -> str:
-    out = []
+EXIT_LINE = re.compile(r"(?m)^Exit code (-?\d+)\b")
+
+
+def failure_line(data: dict) -> str | None:
+    """`the command FAILED (exit n)` for a failed command; None otherwise.
+    The payload has no exit-code key; the harness writes it into `error`."""
+    if data.get("hook_event_name") != FAILURE_EVENT:
+        return None
+    m = EXIT_LINE.search(data.get("error") or "") if isinstance(data.get("error"), str) else None
+    return f"the command FAILED (exit {m.group(1)})" if m else "the command FAILED"
+
+
+def render(hits, cmd: str, cmd_hits=(), contract_notes=(), failed: str | None = None,
+           written=()) -> str:
+    out = [f"{failed}. Its output was scanned too:"] if failed else []
+    if written:
+        out.append("Python files written through a shell (post_edit_check did not see these):")
+        out.extend(f"  {w}" for w in written)
     if contract_notes:
         out.append("PAYLOAD CONTRACT: the guard may be reading the wrong keys, so a quiet run proves nothing:")
         out.extend(f"  !! {n}" for n in contract_notes)
@@ -273,6 +315,139 @@ def _trace(msg: str) -> None:
         sys.stderr.write(f"diagnostic_scan: could not write trace to {log}\n")
 
 
+# --- Python written through a shell (US-013) ---------------------------------
+# post_edit_check fires on Write/Edit only. A .py file written by a heredoc
+# or a patch script skipped the in-turn lint: an unused import got through
+# a turn that way and was caught only by the full gate run.
+
+SKIP_DIRS = frozenset((".git", ".venv", "__pycache__", ".pytest_cache", "node_modules"))
+MAX_WRITTEN = 5  # each check runs ruff and pyrefly; the hook has a 15 s budget
+SLACK_S = 2      # clock and mtime granularity
+
+
+def recently_written(root: pathlib.Path, since: float) -> list[pathlib.Path]:
+    """The .py files under root whose mtime is at or after `since`."""
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for name in filenames:
+            if name.endswith(".py"):
+                p = pathlib.Path(dirpath) / name
+                try:
+                    if p.stat().st_mtime >= since:
+                        found.append(p)
+                except OSError:
+                    continue
+    return sorted(found)
+
+
+def _git(root: pathlib.Path, *args: str) -> str | None:
+    """stdout of a git command, or None when git cannot answer (not a work tree)."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def committed_in_window(top: pathlib.Path, since: float) -> set[pathlib.Path] | None:
+    """Files changed by plain commits made since `since`, judged from the reflog.
+
+    Only `commit:` and `commit (initial):` entries count. If any other entry
+    (rebase, checkout, reset, merge, pull, an amend) falls in the window, the
+    files were rewritten by git, not written by the shell, so nothing counts:
+    PR 5's author rewrite was `rebase (pick)` + `commit (amend)` with identical
+    trees. None when the reflog cannot be read.
+    """
+    out = _git(top, "reflog", "--date=unix", "--format=%H%x00%gd%x00%gs")
+    if out is None:
+        return None
+    window = []
+    for line in out.splitlines():
+        sha, selector, subject = [*line.split("\x00"), "", ""][:3]
+        stamp = re.search(r"@\{(\d+)\}", selector)
+        if not stamp or int(stamp.group(1)) < since:
+            break  # newest first: the first older entry ends the window
+        window.append((sha, subject))
+    if not all(s.startswith(("commit: ", "commit (initial): ")) for _, s in window):
+        return set()
+    changed = set()
+    for sha, _ in window:
+        names = _git(top, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", sha) or ""
+        changed |= {(top / n).resolve() for n in names.splitlines() if n}
+    return changed
+
+
+def written_by_shell(root: pathlib.Path, files: list[pathlib.Path], since: float
+                     ) -> tuple[list[pathlib.Path], bool]:
+    """(the recently modified files whose CONTENT changed, judged by git).
+
+    A file counts when it differs from HEAD (dirty or untracked) or a plain
+    commit in this command's window changed it. A rebase, checkout, stash or
+    touch gives a file a new mtime with content git already has; mtime alone
+    reported all of them. The bool is False when git could not judge, and the
+    files are then returned by mtime alone, which the message must say.
+    """
+    top_out = _git(root, "rev-parse", "--show-toplevel")
+    if top_out is None:
+        return files, False
+    top = pathlib.Path(top_out.strip()).resolve()
+    status = _git(top, "status", "--porcelain", "-z", "--untracked-files=all")
+    committed = committed_in_window(top, since)
+    if status is None or committed is None:
+        return files, False
+    dirty = set()
+    for entry in status.split("\x00"):
+        if len(entry) > 3 and entry[2] == " ":
+            dirty.add((top / entry[3:]).resolve())
+    keep = dirty | committed
+    return [f for f in files if f.resolve() in keep], True
+
+
+def shell_written(data: dict) -> list[str]:
+    """post_edit_check's findings on the .py files this command wrote."""
+    cwd, duration = data.get("cwd"), data.get("duration_ms")
+    if not cwd or not isinstance(duration, (int, float)):
+        return []
+    root = pathlib.Path(cwd).resolve()
+    since = time.time() - duration / 1000 - SLACK_S
+    files, judged_by_git = written_by_shell(root, recently_written(root, since), since)
+    if not files:
+        return []
+    try:
+        sys.path.insert(0, str(HERE))
+        import post_edit_check
+    except Exception as exc:
+        return [f"could not check {len(files)} file(s): {type(exc).__name__}: {exc}"]
+    venv = post_edit_check.venv_python(root, os.name)
+    if venv.exists():
+        python = str(venv)
+    elif all(importlib.util.find_spec(m) for m in ("ruff", "pyrefly")):
+        python = sys.executable  # CI and mutation copies have no .venv
+    else:
+        return []  # post_edit_check already says loudly that the layer is off
+    # Every candidate is named, checked or not (US-023). Returning findings only
+    # made 5 clean files vanish and left "... and 7 more" naming nothing.
+    checked = [(f, post_edit_check.findings(f, root, python)) for f in files[:MAX_WRITTEN]]
+    unchecked = files[MAX_WRITTEN:]
+    flagged = sum(1 for _, found in checked if found)
+    if not flagged and not unchecked:
+        return []  # all checked and clean: not news
+
+    def rel(f: pathlib.Path) -> str:
+        return f.relative_to(root).as_posix() if root in f.parents else str(f)
+
+    out = [f"{len(files)} file(s): {flagged} with findings, {len(checked) - flagged} clean, "
+           f"{len(unchecked)} not checked"]
+    for f, found in checked:
+        out.append(f"{rel(f)}: {len(found)} finding(s)" if found else f"{rel(f)}: clean")
+        out.extend(f"  {line}" for line in found)
+    out.extend(f"{rel(f)}: not checked (over the limit of {MAX_WRITTEN})" for f in unchecked)
+    if not judged_by_git:
+        out.insert(0, "(not a git work tree: judged by mtime, so a file git rewrote may be listed)")
+    return out
+
+
 def main() -> int:
     try:
         raw = sys.stdin.read()
@@ -292,12 +467,13 @@ def main() -> int:
         return 0
     cmd = (data.get("tool_input") or {}).get("command", "")
     hits, cmd_hits = scan(out), scan_command(cmd)
-    _trace(f"  output={len(out)} chars hits={len(hits)} cmd_hazards={cmd_hits}")
-    if not hits and not cmd_hits and not contract_notes:
+    written = shell_written(data)
+    _trace(f"  output={len(out)} chars hits={len(hits)} cmd_hazards={cmd_hits} written={len(written)}")
+    if not hits and not cmd_hits and not contract_notes and not written:
         return 0
     message = json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PostToolUse",
-        "additionalContext": render(hits, cmd, cmd_hits, contract_notes),
+        "hookEventName": data.get("hook_event_name") or "PostToolUse",
+        "additionalContext": render(hits, cmd, cmd_hits, contract_notes, failure_line(data), written),
     }})
     sys.stdout.buffer.write((message + "\n").encode("utf-8"))
     return 0

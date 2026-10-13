@@ -44,17 +44,171 @@ themselves.
 | 7 | On its first run `check_red` failed 3 tests: two hook cases whose ids embedded a path that the unit/integration split had changed (the same tests, renamed), and a test that a *test fixture* was frozen, which only test code can make RED. | `check_red` itself | stable ids; the test of test code removed |
 | 8 | **In CI, `check_red` reported 18 new tests as passing on the base code, for a module the base did not have.** CI installs the project editable (`pip install -e`), and setuptools' import finder served `app.rules` from the working copy to the base tree. The gate failed, but for the wrong reason: it had measured HEAD's code twice. Locally it passed, because the local venv had no editable install. | CI disagreeing with the local run, then reproducing it in a venv installed the way CI installs | `tools/isolation.py`: suites on copied trees run in a subprocess with the editable finders removed; used by `check_red` and the mutation check. `tests/integration/test_isolation.py` was RED under an editable install (`DID NOT RAISE ModuleNotFoundError`) and is green now. It can only go RED where the project is installed editable, which is how CI installs, so it has no mutant (a local mutation run could not kill one). |
 | 9 | **The type gate never read the hooks.** pyrefly skips hidden directories whatever its excludes say, so `.claude/hooks` in `pyrefly.toml` was dropped with a one-line `WARN` and the gate still passed. Checked as explicit files, the hooks had 2 real warnings (redundant `str()` calls). A first fix then missed a planted error in a temp directory, because with no config in reach pyrefly falls back to a lenient preset. | reading CI's output instead of its exit code | `tools/check_types.py` checks the project and then the hooks as explicit files, with the preset pinned and warnings failing the gate. `test_check_types.py` plants an error in a hook and requires the command to find it; two mutants (hooks dropped, lenient preset) prove that test can fail. |
-| 10 | **A warning printed and not read: the reader was the defect.** pyrefly's `WARN Skipping include pattern .claude/hooks` was printed above the summary line, locally and in CI. Locally the command was `pyrefly check 2>&1 | tail -1`, which kept only the last line. The failure is positional: diagnostics print first, at the top, and the reader, an AI agent here, scans the bottom for the verdict. | the user rereading CI's log | `.claude/hooks/diagnostic_scan.py`, ported from host6: a PostToolUse hook that scans every Bash result for unsolicited toolchain diagnostics, and the command for `2>&1 | tail` and heredoc hazards. Its findings are attached directly after the tool result in the same turn, where attention already is. 35 tests, built from a payload contract recorded live on host6; 2 mutants. |
+| 10 | **A warning printed and not read: the reader was the defect.** pyrefly's `WARN Skipping include pattern .claude/hooks` was printed above the summary line, locally and in CI. Locally the command was `pyrefly check 2>&1 | tail -1`, which kept only the last line. The failure is positional: diagnostics print first, at the top, and the reader, an AI agent here, scans the bottom for the verdict. | the user rereading CI's log | `.claude/hooks/diagnostic_scan.py`, ported from host6: a PostToolUse hook that scans every Bash result for unsolicited toolchain diagnostics, and the command for `2>&1 | tail` and heredoc hazards. Its findings are attached directly after the tool result in the same turn, where attention already is. 37 tests (`check_red --base 2b68ad6^ --head 2b68ad6` → `37 new test(s) ... OK all 37 new test(s) were RED`; the commit message said 35), built from a payload contract recorded live on host6; 2 mutants. |
 | 11 | The FP gate caught 4 mutable module-level dicts in the guard's own new test file, on the first run after it was written. | `check_fp` (`mutable-constant`), immediately | `MappingProxyType`. The discipline applied to fresh code with no one remembering it. |
 | 12 | One of the guard's suppressions, "`ok`/`FAIL` lines are the operator's own verdicts", is untested here: no verdict line this repo prints trips any pattern, so a mutant removing it survived. | the mutation check (a surviving mutant) | the suppression stays (it has evidence on host6); the mutant now targets git's line-ending advisory, the suppression that does matter here, since `warning: in the working copy...` matches the compiler-style pattern. |
-
+| 13 | **F1. The PowerShell tool bypassed every shell hook**: the matchers named `Bash` only. | probe: `git add -A --dry-run` denied in Bash, exit 0 in PowerShell | matchers `Bash\|PowerShell` (`test_settings.py`). Live: PowerShell `git add -A --dry-run` → `PreToolUse:PowerShell hook error: \`git add -A\` ... stages everything` |
+| 14 | **F2. `post_edit_check` could not start on Windows**: wired to `.venv/bin/python`. | the wired command: `exit=127 ... No such file or directory` | launched by `python3`; `venv_python(root, os_name)` picks the venv per OS; with no venv it exits 2 and says the layer is NOT running. Live: `x: int = "s"` → `ERROR \`Literal['s']\` is not assignable to \`int\` [bad-assignment]` in the same turn |
+| 15 | **F3. False `missing-import` ERRORs** from `post_edit_check` and `check_types`: pyrefly asked the first python on PATH for site-packages. The PRD's first oracle (an empty PATH) passed on the base, because pyrefly auto-detects an in-repo `.venv`: `pyrefly dump-config` → `Using interpreter: ...\.venv\Scripts\python.exe`. | a probe on a clean file: 3 bogus ERRORs | `--python-interpreter-path`. The oracle is now a repo copy with no `.venv` and a bare venv first on PATH, RED on the base with `ERROR Cannot find module \`sqlalchemy\` [missing-import]` |
+| 16 | **F4. A failed command was never scanned**: a non-zero exit fires `PostToolUseFailure`, not `PostToolUse`. Its payload, recorded live, carries the output in `error` and has no `tool_response`. | `.fired.log`: the exit-0 command logged, the exit-3 command not | registered on `PostToolUseFailure`; `payload_contract_failure.json`. Live: `echo "WARN live"; exit 3` → `the command FAILED (exit 3). Its output was scanned too: ... L2 WARN live` |
+| 17 | **F5. `guard_git` missed discard and stage-all forms**, and denied `restore --staged` (index only). | `probe_git.py`: 17 of 29 mismatched; `probe_git2.py`: 9 of 20 | `test_guard_git.py` (65 tests). After: 1 and 1 mismatches, both explained in the evidence file's AFTER section |
+| 18 | **F6. `guard_gates` missed gate files, case variants and NotebookEdit.** | `probe_gates.py`: 11 of 20 | the gate list, casefolded paths, `notebook_path`. After: `mismatches: 0` |
+| 19 | **F7. Payload-contract false alarms**, 6 in one session, every one an added key (`persistedOutputPath`, `backgroundTaskId`, `bashEditDiff`, `returnCodeInterpretation`, ...). PowerShell's result also never has `noOutputExpected`. | the alarms, read live | only a lost key alarms; `noOutputExpected` is optional. Live: a persisted-output command and a background command → no contract note |
+| 20 | **F8. pyrefly `ERROR` lines matched nothing**: 40+ in one output, 0 hits. | reading the output | the `^\s*ERROR\b` pattern; precision probe still 0 hits on all green gate output |
+| 21 | The hook tests passed the session's env to the hooks, so in the session launched with `GATE_EDIT=1` the gate opened and the baseline went red: `1 failed, 224 passed`; mutation `control failed`. | the baseline run before US-001 | `run_hook` drops `GATE_EDIT` (aff6f44) |
+| 22 | `post_edit_check` reported a false `Cannot find module guard_shared` on every hook edit, once it actually ran. | its own output, on the first hook edit | the hooks directory on pyrefly's search path for hook files |
+| 23 | The new `$( )` parsing in `guard_git` refused its own author's commit: a heredoc body (the progress note) mentioned `$(git add -A)`. | the guard, live | `$( )` is looked for only outside heredoc bodies; test and mutant |
+| 24 | **`check_red` judges the committed HEAD, not the working tree**, so each task's check_red line, run before its commit, covered the previous commits. | "107 new test(s)" both before and after new tests were added | gates now run on a clean worktree of each task's commit; the cumulative run covered every earlier test (81 of 81 RED) |
+| 25 | A stale `.pyc` ran old hook code: a same-length edit within one second left the source mtime and size equal to the cache. | a test that should have passed did not, until `__pycache__` was removed | not fixed. Proposal: launch hooks with `python3 -B` (review issue R2-3) |
+| 26 | A crashing PreToolUse hook exits 1, which lets the call through: a half-edited `guard_shared` switched every guard off for about 18 s. | the transcript audit | crash handlers that refuse, or, under `GATE_EDIT=1`, let the edit through and say so; tests on broken copies; 2 mutants |
+| 27 | `pytest \| tail -2 && git commit` commits after a failing suite: the pipeline's status is `tail`'s. The `2>&1 \| tail` warning fired on such a call and changed nothing (7 warned uses, 0 changes). | the transcript audit | `guard_git` refuses the chain without `set -o pipefail`; the warning was retired. Live: `true \| tail -1 && git commit --dry-run` → `this commit is gated on tail's exit status` |
 ## CI evidence
 
 The gates as they ran in GitHub Actions, not only locally: the command each
-step ran and what it printed. Taken from the log of
+step ran and what it printed. Only per-test `PASSED` lines and environment
+noise are trimmed. Each run is kept as the record of itself. The current
+numbers are under Measurements, each with its command.
+
+### Run 38086552299: PR 5 (harness hardening), commit `c4eec9a`, 2026-10-10
+
+[CI run 38086552299](https://github.com/williamp44/workorder-tracker/actions/runs/38086552299),
+`pull_request` event on [PR 5](https://github.com/williamp44/workorder-tracker/pull/5)
+at `c4eec9a` (after Sprint 6), conclusion `success`. Both legs passed: SQLite
+in 12m20s, MariaDB in 53s. Taken from `gh run view 38086552299 --log`.
+
+This is the first Linux run of the tests written on Windows for
+`PRD_HARNESS_HARDENING.md`. None of them assumed Windows. CI also killed
+`test-helpers-write-bytecode`, which survives locally whenever a shell sets
+`PYTHONDONTWRITEBYTECODE=1`.
+
+Trimmed as environment noise from the runner, not this repo: a Node
+`DeprecationWarning` for `punycode` during GitHub's post-job cleanup, and
+MariaDB 11.8's `io_uring_queue_init() failed with EPERM ... falling back to
+libaio` in the service container's log.
+
+**Lint (ruff)** (SQLite leg)
+
+```
+$ ruff check .
+All checks passed!
+```
+
+**Types (pyrefly, project and hooks)** (SQLite leg)
+
+```
+$ python -m tools.check_types
+ INFO Checking project configured at `/home/runner/work/workorder-tracker/workorder-tracker/pyrefly.toml`
+ INFO 0 diagnostics (4 suppressed)
+ INFO 0 diagnostics
+```
+
+The second line is the project and the third the hooks, checked as explicit
+files. The `WARN Skipping include pattern .../.claude/hooks` that run
+37980856090 printed (instrument defect 9) is gone.
+
+**Test (SQLite)** (SQLite leg)
+
+```
+$ pytest -v
+collecting ... collected 409 items
+============================= 409 passed in 15.46s =============================
+```
+
+**FP discipline (check_fp)** (SQLite leg)
+
+```
+$ python -m tools.check_fp
+0 finding(s)
+```
+
+**RED first (check_red)** (SQLite leg)
+
+```
+$ python -m tools.check_red --base origin/main
+  base 8209a76f  head HEAD
+  198 new test(s), 49 declared control(s)
+OK   all 149 new test(s) were RED on the base code
+```
+
+**Mutation check (SQLite)** (SQLite leg)
+
+```
+$ python -m tools.mutation_check
+  control (no mutation)              pytest exit 0
+  canary-docstring-only                pytest exit 0
+  drop-tenant-filter-get-work-order    pytest exit 1
+  drop-tenant-filter-list-work-orders  pytest exit 1
+  drop-tenant-filter-get-site          pytest exit 1
+  allow-done-to-open                   pytest exit 1
+  transition-table-made-mutable        pytest exit 1
+  rules-core-does-io                   pytest exit 1
+  unit-test-uses-a-mock                pytest exit 1
+  unconditional-status-write           pytest exit 1
+  snapshot-conflict-becomes-500        pytest exit 1
+  drop-csrf-guard                      pytest exit 1
+  accept-blank-names                   pytest exit 1
+  unbounded-ids                        pytest exit 1
+  red-gate-accepts-green-tests         pytest exit 1
+  fp-check-allows-mutable-constants    pytest exit 1
+  type-check-skips-the-hooks           pytest exit 1
+  type-check-on-lenient-preset         pytest exit 1
+  diagnostic-guard-reads-the-documented-key pytest exit 1
+  diagnostic-guard-fires-on-git-advisory pytest exit 1
+  gate-hook-forgets-ruff-config        pytest exit 1
+  gate-hook-forgets-settings-local     pytest exit 1
+  gate-override-accepts-any-value      pytest exit 1
+  shell-hooks-skip-powershell          pytest exit 1
+  hooks-write-bytecode                 pytest exit 1
+  test-helpers-write-bytecode          pytest exit 1
+  gate-hook-skips-notebooks            pytest exit 1
+  post-edit-drops-interpreter-path     pytest exit 1
+  check-types-drops-interpreter-path   pytest exit 1
+  scan-ignores-failed-commands         pytest exit 1
+  python3-check-silent                 pytest exit 1
+  gates-case-sensitive                 pytest exit 1
+  gates-skip-dotdot                    pytest exit 1
+  gates-forget-check-red               pytest exit 1
+  post-edit-forgets-hook-siblings      pytest exit 1
+  git-hook-ignores-global-options      pytest exit 1
+  git-hook-ignores-nested-shell        pytest exit 1
+  git-hook-runs-heredoc-subshells      pytest exit 1
+  git-hook-allows-checkout-without-dashdash pytest exit 1
+  git-hook-allows-reset-hard           pytest exit 1
+  git-hook-allows-rm-force             pytest exit 1
+  git-hook-misses-abbreviated-options  pytest exit 1
+  git-hook-misses-f-in-cluster         pytest exit 1
+  git-hook-ignores-cd                  pytest exit 1
+  git-hook-ignores-repo-aliases        pytest exit 1
+  git-hook-denies-index-only-restore   pytest exit 1
+  git-hook-crash-fails-open            pytest exit 1
+  gate-hook-crash-blocks-override      pytest exit 1
+  post-edit-judges-outside-files       pytest exit 1
+  shell-written-python-unchecked       pytest exit 1
+  shell-check-ignores-git-state        pytest exit 1
+  shell-check-misses-same-command-commit pytest exit 1
+  shell-check-hides-unchecked-names    pytest exit 1
+  commit-gated-on-filter-allowed       pytest exit 1
+  contract-alarms-on-added-keys        pytest exit 1
+  scan-misses-pyrefly-error            pytest exit 1
+  contract-alarms-on-headless-sessions pytest exit 1
+  git-hook-allows-add-all              pytest exit 1
+  migration-default-drifts-from-model  pytest exit 1
+OK   control passed, equivalent canary survived, 57 of 57 mutants killed
+```
+
+**Test (MariaDB)** (MariaDB leg)
+
+```
+$ pytest -v
+collecting ... collected 409 items
+============================= 409 passed in 17.21s =============================
+```
+
+### Run 37980856090: PR #2, commit `360bf79`
+
 [CI run 37980856090](https://github.com/williamp44/workorder-tracker/actions/runs/37980856090),
-on PR #2's last commit `360bf79`, merged into `main` as `6d31252`. Only
-per-test `PASSED` lines and environment noise are trimmed.
+on PR #2's last commit `360bf79`, merged into `main` as `6d31252`
+(174 tests, 17 mutants).
 
 **Lint (ruff)** (SQLite leg)
 
@@ -145,6 +299,8 @@ the working copy's code.
 
 ### Mutation check
 
+At `18d53f1`, from CI run [38149872263](https://github.com/williamp44/workorder-tracker/actions/runs/38149872263) (SQLite leg):
+
 ```
 $ python -m tools.mutation_check
   control (no mutation)              pytest exit 0
@@ -163,10 +319,58 @@ $ python -m tools.mutation_check
   unbounded-ids                        pytest exit 1
   red-gate-accepts-green-tests         pytest exit 1
   fp-check-allows-mutable-constants    pytest exit 1
+  type-check-skips-the-hooks           pytest exit 1
+  type-check-on-lenient-preset         pytest exit 1
+  diagnostic-guard-reads-the-documented-key pytest exit 1
+  diagnostic-guard-fires-on-git-advisory pytest exit 1
   gate-hook-forgets-ruff-config        pytest exit 1
+  gate-hook-forgets-settings-local     pytest exit 1
+  gate-override-accepts-any-value      pytest exit 1
+  shell-hooks-skip-powershell          pytest exit 1
+  hooks-write-bytecode                 pytest exit 1
+  test-helpers-write-bytecode          pytest exit 1
+  gate-hook-skips-notebooks            pytest exit 1
+  post-edit-drops-interpreter-path     pytest exit 1
+  check-types-drops-interpreter-path   pytest exit 1
+  scan-ignores-failed-commands         pytest exit 1
+  python3-check-silent                 pytest exit 1
+  gates-case-sensitive                 pytest exit 1
+  gates-skip-dotdot                    pytest exit 1
+  gates-forget-check-red               pytest exit 1
+  post-edit-forgets-hook-siblings      pytest exit 1
+  git-hook-ignores-global-options      pytest exit 1
+  git-hook-ignores-nested-shell        pytest exit 1
+  git-hook-runs-heredoc-subshells      pytest exit 1
+  git-hook-allows-checkout-without-dashdash pytest exit 1
+  git-hook-allows-reset-hard           pytest exit 1
+  git-hook-allows-rm-force             pytest exit 1
+  git-hook-misses-abbreviated-options  pytest exit 1
+  git-hook-misses-f-in-cluster         pytest exit 1
+  git-hook-ignores-cd                  pytest exit 1
+  git-hook-ignores-repo-aliases        pytest exit 1
+  git-hook-denies-index-only-restore   pytest exit 1
+  git-hook-crash-fails-open            pytest exit 1
+  gate-hook-crash-blocks-override      pytest exit 1
+  post-edit-judges-outside-files       pytest exit 1
+  shell-written-python-unchecked       pytest exit 1
+  shell-check-ignores-git-state        pytest exit 1
+  shell-check-misses-same-command-commit pytest exit 1
+  shell-check-hides-unchecked-names    pytest exit 1
+  commit-gated-on-filter-allowed       pytest exit 1
+  contract-alarms-on-added-keys        pytest exit 1
+  scan-misses-pyrefly-error            pytest exit 1
+  contract-alarms-on-headless-sessions pytest exit 1
   git-hook-allows-add-all              pytest exit 1
   migration-default-drifts-from-model  pytest exit 1
-OK   control passed, equivalent canary survived, 17 of 17 mutants killed
+OK   control passed, equivalent canary survived, 57 of 57 mutants killed
+```
+
+### Tests
+
+```
+$ pytest -v      # CI run 38149872263, both legs, at 18d53f1
+409 passed in 15.49s   (SQLite)
+409 passed in 14.60s   (MariaDB)
 ```
 
 The verdict reads pytest's exit code, never its output. Exit 1 means tests
@@ -219,10 +423,10 @@ Every new test must fail against the code before the change. This branch
 against `main`:
 
 ```
-$ python -m tools.check_red --base main
-  base 7e45b323  head HEAD
-  69 new test(s), 1 declared control(s)
-OK   all 68 new test(s) were RED on the base code
+$ python -m tools.check_red --base origin/main   # CI run 38149872263, at 18d53f1
+  base 8209a76f  head HEAD
+  198 new test(s), 49 declared control(s)
+OK   all 149 new test(s) were RED on the base code
 ```
 
 The same tool, run over the earlier commits:
