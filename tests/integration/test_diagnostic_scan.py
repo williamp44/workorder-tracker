@@ -12,8 +12,13 @@ passing output from this repo, and matter more: a guard that fires on a clean
 run teaches the reader to ignore it.
 """
 
+import importlib.util
 import json
+import os
+import re
+import shutil
 import subprocess
+import time
 from types import MappingProxyType
 import sys
 from pathlib import Path
@@ -47,7 +52,7 @@ def payload(stdout: str = "", stderr: str = "", command: str = "python3 x.py") -
 
 def run(data: dict | str) -> subprocess.CompletedProcess[str]:
     stdin = data if isinstance(data, str) else json.dumps(data)
-    return subprocess.run([sys.executable, str(HOOK)], input=stdin, capture_output=True, text=True)
+    return subprocess.run([sys.executable, "-B", str(HOOK)], input=stdin, capture_output=True, text=True)
 
 
 def context(r: subprocess.CompletedProcess[str]) -> str:
@@ -75,6 +80,14 @@ MUST_FIRE = MappingProxyType({
     "text decoded wrongly": "'utf-8' codec can't decode byte 0x97 in position 882: invalid start byte\n",
     "a deprecation nobody asked about": "/usr/lib/python3/foo.py:12: DeprecationWarning: ast.Str is deprecated\n",
     "a compiler-style error line": "error: cannot find symbol\n",
+    # F8: pyrefly's ERROR lines were never matched; these are F3's false
+    # missing-import errors, as US-002's RED run printed them.
+    "pyrefly ERROR lines": (
+        "ERROR Cannot find module `sqlalchemy` [missing-import]\n"
+        "  ERROR Could not import `op` from `alembic` [missing-module-attribute]\n"
+        "ERROR Cannot find module `fastapi` [missing-import]\n"
+        " INFO 3 errors\n"
+    ),
 })
 
 
@@ -95,6 +108,11 @@ MUST_BE_QUIET = MappingProxyType({
     "the suite passing": "collecting ... collected 174 items\n============ 174 passed in 2.61s ============\n",
     "ruff clean": "All checks passed!\n",
     "pyrefly clean": " INFO Checking project configured at `./pyrefly.toml`\n INFO 0 errors (4 suppressed)\n",
+    "pyrefly clean, as check_types prints it": " INFO 0 diagnostics (4 suppressed)\n INFO 0 diagnostics\n",
+    "pytest -v, with test names that say error": (
+        "tests/integration/test_hooks.py::test_a_crashing_git_guard_refuses_and_names_the_crash[NameError] PASSED [ 40%]\n"
+        "tests/unit/test_errors.py::test_error_page_renders PASSED [ 41%]\n"
+    ),
     "check_fp clean": "0 finding(s)\n",
     "check_red passing": "  base 7e45b323  head HEAD\n  72 new test(s), 1 declared control(s)\nOK   all 71 new test(s) were RED on the base code\n",
     "the mutation check, whose FAIL lines are its own verdicts": (
@@ -119,12 +137,14 @@ def test_stays_quiet_on_a_verdict_or_clean_run(label):
 HAZARDS = MappingProxyType({
     "a heredoc body with an escaped backslash": ("python3 - <<'PY'\ns = '" + BS + BS + "'\nPY", "heredoc"),
     "a heredoc body with a docstring continuation": ('cat > t.py <<"EOF"\nx = """' + BS + "\nEOF", "heredoc"),
-    # The incident in this repo, verbatim.
-    "stderr merged, then all but the last line dropped": (".venv/bin/pyrefly check 2>&1 | tail -1", "tail"),
-    "stderr merged, then head": ("ruff check . 2>&1 | head -5", "tail"),
 })
 
 QUIET_COMMANDS = MappingProxyType({
+    # US-015 Step 3: the truncation warning was retired. Measured: 7 warned
+    # uses, 0 behaviour changes, 17 `| grep` uses it never saw. US-014's
+    # refusal holds the part that mattered (a commit gated on a filter).
+    "stderr merged, then all but the last line dropped": ".venv/bin/pyrefly check 2>&1 | tail -1",
+    "stderr merged, then head": "ruff check . 2>&1 | head -5",
     "a heredoc with no backslash in its body": "cat > notes.md <<'EOF'\n- plain text\nEOF",
     "backslashes in a path but no heredoc": "ls C:" + BS + "dev" + BS + "clojure",
     "truncation without merged stderr: a warning still shows": "pytest -q | tail -1",
@@ -174,24 +194,290 @@ def test_a_payload_with_neither_key_is_loud_not_a_quiet_clean_run():
     assert r.returncode == 0 and "scanning NOTHING" in r.stderr
 
 
-@pytest.mark.parametrize("change,expected", [
-    ("drop tool_use_id", "tool_use_id"),
-    ("add some_new_field", "some_new_field"),
-])
-def test_top_level_drift_is_reported(change, expected):
+def test_a_lost_top_level_key_is_reported():
     data = payload(stdout="all good\n")
-    if change.startswith("drop"):
-        data.pop("tool_use_id")
-    else:
-        data["some_new_field"] = ""
+    data.pop("tool_use_id")
     ctx = context(run(data))
-    assert "SHAPE MOVED" in ctx and expected in ctx
+    assert "SHAPE MOVED" in ctx and "tool_use_id" in ctx
+
+
+# US-007 (F7): every alarm seen live was an ADDED key, and every one was
+# benign: 6 false alarms in one session. Only a loss can make the guard read
+# the wrong thing, so only a loss is reported.
+
+def test_an_added_top_level_key_is_not_an_alarm():
+    data = payload(stdout="all good\n")
+    data["some_new_field"] = ""
+    assert "CONTRACT" not in context(run(data))
+
+
+@pytest.mark.parametrize("extra", [
+    ("persistedOutputPath", "persistedOutputSize"),   # a large output
+    ("backgroundTaskId",),                            # a background command
+    ("backgroundTaskId", "backgroundCwdHint"),
+    ("bashEditDiff",),                                # a command that edited a file
+    ("returnCodeInterpretation",),                    # non-zero exit reported as success
+    ("backgroundTaskId", "timedOutAfterMs"),          # seen live in this PRD's run
+])
+def test_keys_the_harness_adds_to_tool_response_are_not_an_alarm(extra):
+    data = payload(stdout="all good\n")
+    data["tool_response"].update({k: "" for k in extra})
+    assert "CONTRACT" not in context(run(data))
+
+
+def test_a_powershell_result_without_no_output_expected_is_not_an_alarm():
+    # Found live in US-001: PowerShell's tool_response never has it.
+    data = payload(stdout="all good\n")
+    data["tool_name"] = "PowerShell"
+    del data["tool_response"]["noOutputExpected"]
+    assert "CONTRACT" not in context(run(data))
+
+
+def test_a_headless_session_without_a_scratchpad_is_not_an_alarm():
+    # Found live in US-REVIEW-S3: `claude -p` payloads have no scratchpad_dir,
+    # so every call in a headless run (ralph.sh) alarmed. The guard never reads it.
+    data = payload(stdout="all good\n")
+    del data["scratchpad_dir"]
+    assert "CONTRACT" not in context(run(data))
+
+
+@pytest.mark.control("pins that losing a key the guard reads still alarms; base alarms too")
+def test_losing_stdout_is_still_an_alarm():
+    data = payload(stdout="all good\n")
+    del data["tool_response"]["stdout"]
+    assert "tool_response keys moved" in context(run(data))
 
 
 def test_tool_response_changing_its_own_keys_is_reported():
     data = payload()
     data["tool_response"] = {"output": "x"}
     assert "tool_response keys moved" in context(run(data))
+
+
+# --- failed commands: PostToolUseFailure (F4) -------------------------------
+# A non-zero exit does not fire PostToolUse; it fires PostToolUseFailure, with
+# its own payload, pinned from a live firing in payload_contract_failure.json.
+
+FAILURE_PIN = json.loads((HOOKS / "payload_contract_failure.json").read_text(encoding="utf-8"))
+
+
+def failure_payload(error: str, command: str = "python3 x.py") -> dict:
+    """Exactly the pinned keys of a failed command's payload."""
+    out: dict = {}
+    for k in FAILURE_PIN["top_level_keys"]:
+        if k == "tool_input":
+            out[k] = {kk: "" for kk in FAILURE_PIN["tool_input_keys"]}
+            out[k]["command"] = command
+        elif k == "tool_name":
+            out[k] = "Bash"
+        elif k == "hook_event_name":
+            out[k] = "PostToolUseFailure"
+        elif k == "is_interrupt":
+            out[k] = False
+        elif k == "error":
+            out[k] = error
+        else:
+            out[k] = ""
+    return out
+
+
+def test_the_recorded_failure_contract_carries_the_output_in_error():
+    assert "error" in FAILURE_PIN["top_level_keys"]
+    assert "tool_response" not in FAILURE_PIN["top_level_keys"]
+
+
+def test_a_diagnostic_in_a_failed_command_is_reported_as_a_failure():
+    r = run(failure_payload("Exit code 3\nWARN live\n", command='echo "WARN live"; exit 3'))
+    decision = json.loads(r.stdout)["hookSpecificOutput"]
+    assert decision["hookEventName"] == "PostToolUseFailure"
+    assert "WARN live" in decision["additionalContext"]
+    assert "the command FAILED (exit 3)" in decision["additionalContext"]
+    assert "CONTRACT" not in decision["additionalContext"]
+
+
+@pytest.mark.control("pins precision on failure payloads: a failed command with no diagnostic stays quiet")
+def test_a_failed_command_with_no_diagnostic_stays_quiet():
+    r = run(failure_payload("Exit code 1\n"))
+    assert r.returncode == 0 and r.stdout.strip() == ""
+
+
+# --- Python written through a shell (US-013) --------------------------------
+# post_edit_check fires on Write/Edit only. A file written by a shell command
+# (a heredoc, a patch script) skipped the in-turn lint; an F401 got through.
+
+ROOT = HOOKS.parents[1]
+
+
+def load_scan():
+    sys.path.insert(0, str(HOOKS))
+    writes = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True  # US-016: no .pyc for a live hook to read stale
+    try:
+        spec = importlib.util.spec_from_file_location("diagnostic_scan", HOOK)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.dont_write_bytecode = writes
+        sys.path.remove(str(HOOKS))
+
+
+def test_recently_written_finds_only_the_python_files_changed_since(tmp_path):
+    old, new, note = tmp_path / "old.py", tmp_path / "pkg" / "new.py", tmp_path / "new.md"
+    new.parent.mkdir()
+    for f in (old, new, note):
+        f.write_text("x = 1\n")
+    os.utime(old, (1_000_000, 1_000_000))
+    since = time.time() - 60
+    assert load_scan().recently_written(tmp_path, since) == [new]
+
+
+def shell_payload(project: Path, command: str) -> dict:
+    data = payload(stdout="", command=command)
+    data["cwd"], data["duration_ms"] = str(project), 500
+    return data
+
+
+def test_python_written_through_a_shell_is_checked(tmp_path):
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    (tmp_path / "bad.py").write_text("def f(unused):\n    return 1\n")
+    ctx = context(run(shell_payload(tmp_path, "python write_it.py")))
+    assert "Python files written through a shell" in ctx and "ARG001" in ctx
+
+
+@pytest.mark.control("pins precision: a command that writes no .py file adds nothing; base adds nothing")
+def test_a_command_that_writes_no_python_reports_nothing(tmp_path):
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    bad = tmp_path / "bad.py"
+    bad.write_text("def f(unused):\n    return 1\n")
+    os.utime(bad, (1_000_000, 1_000_000))  # written long before this command
+    assert context(run(shell_payload(tmp_path, "ls"))) == ""
+
+
+# --- US-022: judged by git content, not mtime --------------------------------
+# PR 5's author rewrite (a rebase, every tree identical) gave every rewritten
+# file a fresh mtime, and the check reported them all as shell-written.
+
+BAD = "def f(unused):\n    return 1\n"  # ARG001
+OLD = "1000000000 +0000"  # setup happens long before the command being judged
+
+
+def git(repo: Path, *args: str, old: bool = False) -> None:
+    env = dict(os.environ, GIT_AUTHOR_DATE=OLD, GIT_COMMITTER_DATE=OLD) if old else None
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.autocrlf=false",
+                    *args], cwd=repo, check=True, capture_output=True, env=env)
+
+
+def repo_with_committed_bad_file(tmp_path: Path) -> Path:
+    """A git repo whose a.py (with an ARG001) was committed and written long ago."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    shutil.copy(ROOT / "ruff.toml", repo / "ruff.toml")
+    (repo / "a.py").write_text(BAD)
+    git(repo, "init", "-q", "-b", "main", old=True)
+    git(repo, "add", "ruff.toml", "a.py", old=True)
+    git(repo, "commit", "-q", "-m", "setup", old=True)
+    os.utime(repo / "a.py", (1_000_000, 1_000_000))
+    return repo
+
+
+def shell_check(repo: Path, command: str = "the command under test") -> str:
+    return context(run(shell_payload(repo, command)))
+
+
+@pytest.mark.control("pins that a new untracked file is still checked; base checks it by mtime")
+def test_an_untracked_file_written_through_a_shell_is_checked(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    (repo / "new.py").write_text(BAD)
+    ctx = shell_check(repo)
+    assert "new.py" in ctx and "ARG001" in ctx
+
+
+@pytest.mark.control("pins that an uncommitted shell edit is still checked; base checks it by mtime")
+def test_a_tracked_file_changed_through_a_shell_is_checked(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    (repo / "a.py").write_text(BAD + "\n\ndef g(also_unused):\n    return 2\n")
+    assert "ARG001" in shell_check(repo)
+
+
+@pytest.mark.control("pins rule (b): written and committed in one command is still checked")
+def test_a_file_written_and_committed_in_the_same_command_is_checked(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    (repo / "b.py").write_text(BAD)
+    git(repo, "add", "b.py")
+    git(repo, "commit", "-q", "-m", "write and commit")
+    ctx = shell_check(repo, "printf ... > b.py && git add b.py && git commit -m x")
+    assert "b.py" in ctx and "ARG001" in ctx
+
+
+def test_a_rebase_that_rewrites_files_with_identical_content_is_not_reported(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    (repo / "a.py").write_text(BAD + "\n\ndef g(also_unused):\n    return 2\n")
+    git(repo, "commit", "-q", "-am", "second", old=True)
+    os.utime(repo / "a.py", (1_000_000, 1_000_000))
+    # PR 5's shape: rewrite authors over a range, trees identical.
+    git(repo, "rebase", "-q", "HEAD~1", "--exec", "git commit -q --amend --no-edit --author='X <x@y>'")
+    git(repo, "rebase", "-q", "--force-rebase", "HEAD~1")
+    assert (repo / "a.py").stat().st_mtime > 1_000_000, "the fixture must rewrite a.py, or this tests nothing"
+    assert shell_check(repo, "git rebase main --exec 'git commit --amend --author=...'") == ""
+
+
+def test_a_checkout_whose_files_match_the_new_head_is_not_reported(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    git(repo, "checkout", "-q", "-b", "other", old=True)
+    (repo / "a.py").write_text(BAD + "\n\ndef g(also_unused):\n    return 2\n")
+    git(repo, "commit", "-q", "-am", "other", old=True)
+    git(repo, "checkout", "-q", "main", old=True)
+    os.utime(repo / "a.py", (1_000_000, 1_000_000))
+    git(repo, "checkout", "-q", "other")
+    assert shell_check(repo, "git checkout other") == ""
+
+
+@pytest.mark.control("pins that a stash pop leaving the file dirty is checked; base checks it by mtime")
+def test_a_stash_pop_that_leaves_the_file_dirty_is_checked(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    (repo / "a.py").write_text(BAD + "\n\ndef g(also_unused):\n    return 2\n")
+    git(repo, "stash", "-q")
+    git(repo, "stash", "pop", "-q")
+    assert "ARG001" in shell_check(repo, "git stash && git stash pop")
+
+
+def test_touching_a_clean_file_is_not_reported(tmp_path):
+    repo = repo_with_committed_bad_file(tmp_path)
+    os.utime(repo / "a.py")  # mtime now, content exactly as committed
+    assert shell_check(repo, "touch a.py") == ""
+
+
+# --- US-023: every file the check saw is named --------------------------------
+# On PR 5 the message was a header over "... and 7 more file(s) not checked":
+# the 5 checked files were clean, so they added no lines, and nothing was named.
+
+def test_every_candidate_file_is_named_checked_or_not(tmp_path):
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    (tmp_path / "a_bad.py").write_text(BAD)
+    names = ["a_bad.py"] + [f"f{i}.py" for i in range(1, 7)]
+    for n in names[1:]:
+        (tmp_path / n).write_text("x = 1\n")
+    ctx = shell_check(tmp_path)
+    assert all(n in ctx for n in names), ctx
+    assert "1 with findings, 4 clean, 2 not checked" in ctx, ctx
+    assert re.search(r"\.\.\. and \d+ more", ctx) is None, ctx
+
+
+@pytest.mark.control("pins precision: all candidates clean and checked means nothing to report; base is quiet too")
+def test_all_candidates_clean_reports_nothing(tmp_path):
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    for i in range(3):
+        (tmp_path / f"ok{i}.py").write_text("x = 1\n")
+    assert shell_check(tmp_path) == ""
+
+
+def test_outside_a_git_work_tree_the_check_falls_back_to_mtime_and_says_so(tmp_path):
+    shutil.copy(ROOT / "ruff.toml", tmp_path / "ruff.toml")
+    (tmp_path / "bad.py").write_text(BAD)
+    ctx = shell_check(tmp_path)
+    assert "ARG001" in ctx and "not a git work tree: judged by mtime" in ctx
 
 
 # --- robustness: reports, never blocks ------------------------------------

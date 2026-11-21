@@ -1,0 +1,743 @@
+# Progress: PRD_HARNESS_HARDENING.md
+# Execution: in-session, task by task (Decision 2). Session launched with GATE_EDIT=1.
+
+## Preconditions (2026-10-09)
+- P-1: applied as 59a5d6e.
+- P-2: .venv exists (.venv/Scripts/python.exe).
+- GATE_EDIT=1 in the session env: `echo "GATE_EDIT=[$GATE_EDIT]"` -> `GATE_EDIT=[1]`.
+
+## Baseline in this session: NOT green, fixed before US-001
+Baseline gates, run with GATE_EDIT=1 inherited:
+    All checks passed!                      (ruff)
+    INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics   (check_types)
+    0 finding(s)                            (check_fp)
+    FAILED tests/integration/test_hooks.py::test_gate_hook_denies_through_its_stdin_contract
+    1 failed, 224 passed in 8.52s
+    FAIL control failed: the suite is red without any mutation
+Cause: run_hook() passed the session env to the hook, so GATE_EDIT=1 opened
+the gate under test. `env -u GATE_EDIT pytest -k stdin_contract` -> 1 passed.
+Fix: aff6f44 (run_hook drops GATE_EDIT). After: 225 passed.
+Note: the baseline table's 215 tests is pre-P-1; P-1 added 10 -> 225.
+
+## US-001 Shell hooks cover PowerShell
+RED (before the code change):
+    FAILED tests/integration/test_settings.py::test_shell_hooks_judge_every_shell_tool[guard_git.py]
+      AssertionError: guard_git.py matcher is ['Bash']
+    FAILED tests/integration/test_settings.py::test_shell_hooks_judge_every_shell_tool[diagnostic_scan.py]
+      AssertionError: diagnostic_scan.py matcher is ['Bash']
+    FAILED tests/integration/test_settings.py::test_gate_hook_covers_notebook_edits
+      AssertionError: ['Edit', 'MultiEdit', 'Write']
+    FAILED tests/integration/test_hooks.py::test_gate_hook_judges_notebook_edits_by_their_notebook_path
+      assert False  where False = denied(None)
+    4 failed, 3 passed, 33 deselected
+The PowerShell-payload guard_git test passed on the base (guard_git never
+reads tool_name), so it is marked @control.
+
+Live (this session; hooks were re-read without a restart):
+- PowerShell `git add -A --dry-run` ->
+    PreToolUse:PowerShell hook error: `git add -A` / `--all` / `-u` stages everything,
+    including files nobody meant to commit. Stage the explicit paths this change touches.
+- PowerShell `Write-Output "WARN live-probe"` -> additionalContext:
+    L1     WARN live-probe
+            ^ a tool logged a warning
+- .fired.log armed, one PowerShell call:
+    2026-10-09T20:42:07 fired tool=PowerShell
+    2026-10-09T20:42:07   output=11 chars hits=0 cmd_hazards=[]
+  Log deleted after.
+- PowerShell tool_input keys: NOT observed by a hook (the trace does not log
+  key names). As sent by the caller: command, description.
+
+NEW FINDING for US-007: the PowerShell tool_response has no
+`noOutputExpected` key. Live, every PowerShell call:
+    tool_response keys moved: pinned ['interrupted', 'isImage', 'noOutputExpected', 'stderr', 'stdout'],
+    live ['interrupted', 'isImage', 'stderr', 'stdout']
+That is a key LOSS, so "alarm on loss only" as written in US-007 would still
+alarm on every PowerShell call. US-007 must pin per tool, or treat
+noOutputExpected as not required.
+
+Full gate run (GATE_EDIT=1 in env):
+    ruff: All checks passed!
+    check_types: INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics
+    check_fp: 0 finding(s)
+    pytest: 232 passed in 8.49s
+    check_red --base main: 10 new test(s), 6 declared control(s)
+                           OK   all 4 new test(s) were RED on the base code
+    mutation_check: OK   control passed, equivalent canary survived, 25 of 25 mutants killed
+      (shell-hooks-skip-powershell exit 1, gate-hook-skips-notebooks exit 1)
+STATUS: US-001 [x] VERIFIED
+
+## US-002 post_edit_check runs on Windows and POSIX, silent on a clean file
+ORACLE CORRECTED (the PRD said: if not RED on main, stop and record why).
+As specified (VIRTUAL_ENV removed, PATH = an empty dir), the clean-file test
+and the check_types test PASSED on the base: 2 passed. Why: pyrefly
+auto-detects an in-repo .venv.
+    pyrefly dump-config app/services.py -> Using interpreter: C:\dev\workorder-tracker\.venv\Scripts\python.exe
+F3 was probed from a scratch venv OUTSIDE the repo. The oracle now
+reproduces those conditions: a copy of the repo with no .venv (as in CI and
+in mutation copies), plus a bare `python -m venv --without-pip` first on PATH.
+Portable to Linux. A person should review this change of oracle.
+
+RED (before the code change):
+    FAILED test_check_types.py::test_the_project_type_checks_clean_whatever_python_is_on_path
+      AssertionError: ERROR Cannot find module `sqlalchemy` [missing-import] ... (40+ lines)
+      Site package path queried from interpreter: [...scoop\apps\python\current...]
+    FAILED test_hooks.py::test_post_edit_check_finds_the_venv_python_for_each_os
+      AttributeError: module 'post_edit_check' has no attribute 'venv_python'
+    FAILED test_hooks.py::test_post_edit_check_is_silent_on_a_clean_file_whatever_python_is_on_path
+    FAILED test_hooks.py::test_post_edit_check_says_the_layer_is_off_when_there_is_no_venv
+      AssertionError: assert 0 == 2
+    4 failed, 39 deselected
+
+Design note (in depth, not breadth): findings() takes the interpreter as a
+parameter (default sys.executable). main() resolves venv_python(root, os.name),
+exits 2 if it is missing, and passes it in. If findings() required root/.venv
+itself, CI (pip install into the runner's python, no .venv) and every
+mutation copy (.venv skipped) would fail. The no-venv exit applies to .py
+edits only; other edits stay silent, as before.
+
+Live (this session, hooks re-read without a restart):
+- Write scratch_live_probe.py with `x: int = "s"` ->
+    PostToolUse:Write hook blocking error from command: "python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/post_edit_check.py"":
+    Checks found problems in the file you just edited:
+    ERROR `Literal['s']` is not assignable to `int` [bad-assignment]
+- Rewrote it as `x: int = 1` -> no hook output. The file was deleted after.
+- While building the oracle, diagnostic_scan stayed silent on 40+ pyrefly
+  `ERROR Cannot find module` lines in pytest output: F8, seen again live.
+
+Full gate run (VIRTUAL_ENV unset, GATE_EDIT=1):
+    ruff: FAILED first: F401 `os` imported but unused (tests/integration/test_check_types.py).
+          It was edited through a Bash python script, so post_edit_check never saw it.
+          Fixed through Edit -> `ruff check .`: All checks passed!
+    check_types (VIRTUAL_ENV unset): INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics; exit=0
+    check_fp: 0 finding(s)
+    pytest: 238 passed in 10.16s
+    check_red --base main: 17 new test(s), 7 declared control(s)
+                           OK   all 10 new test(s) were RED on the base code
+    mutation_check: OK   control passed, equivalent canary survived, 27 of 27 mutants killed
+      (post-edit-drops-interpreter-path exit 1, check-types-drops-interpreter-path exit 1)
+    pytest and mutation were NOT re-run after the F401 fix: it removed one
+    unused import. test_check_types.py re-run: 3 passed.
+STATUS: US-002 [x] VERIFIED
+
+## US-003 diagnostic_scan also scans failed commands
+Step 1, recorded before the fix: diagnostic_scan registered under
+PostToolUseFailure (Bash|PowerShell). The contract file is now chosen by
+hook_event_name. With .fired.log armed, `echo "WARN live"; exit 3` (Bash):
+    .fired.log: 2026-10-09T20:55:04 fired tool=Bash      (no output= line: scanned nothing)
+    payload_contract_failure.json top_level_keys: cwd, duration_ms, effort, error,
+      hook_event_name, is_interrupt, permission_mode, prompt_id, scratchpad_dir,
+      session_id, tool_input, tool_name, tool_use_id, transcript_path
+    tool_response_keys: null   (no tool_response at all)
+    tool_input_keys: command, description
+  PowerShell `Write-Output "WARN live"; exit 3` -> `fired tool=PowerShell`, same shape.
+  The output is in `error`. There is no exit-code key: the harness writes
+  "Exit code n" into error, as displayed to the agent; failure_line() parses it.
+
+RED (before extract_output read `error`):
+    FAILED test_diagnostic_scan.py::test_a_diagnostic_in_a_failed_command_is_reported_as_a_failure
+      json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)   (hook printed nothing)
+    1 failed, 3 passed
+  test_the_recorded_failure_contract_carries_the_output_in_error: RED on the
+  base (the pin file does not exist there); check_red confirms it.
+  test_a_failed_command_with_no_diagnostic_stays_quiet: @control (precision).
+  test_settings.py::test_failed_shell_commands_are_scanned_too added (RED on the base).
+
+Live (after the fix):
+    PostToolUseFailure:Bash hook additional context: the command FAILED (exit 3). Its output was scanned too:
+    1 unaddressed diagnostic line(s) ...
+      command: echo "WARN live"; exit 3
+      L2     WARN live
+              ^ a tool logged a warning
+    PostToolUseFailure:PowerShell hook additional context: the command FAILED (exit 3). Its output was scanned too:
+      command: Write-Output "WARN live"; exit 3
+      L2     WARN live
+              ^ a tool logged a warning
+  .fired.log deleted after.
+
+Process note: I wrote a Python patch script for diagnostic_scan.py, then
+discarded it unrun (the rule: never write a gate through a shell). All gate
+edits went through Edit.
+Observed: the suite runs the real hooks in place, so an armed .fired.log
+also logs every test firing. Harmless; noted for whoever reads a trace.
+
+Full gate run:
+    ruff: All checks passed!
+    check_types: INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics
+    check_fp: 0 finding(s)
+    pytest: 243 passed in 9.85s
+    check_red --base main: 23 new test(s), 7 declared control(s)
+                           OK   all 16 new test(s) were RED on the base code
+    mutation_check: OK   control passed, equivalent canary survived, 28 of 28 mutants killed
+      (scan-ignores-failed-commands exit 1)
+STATUS: US-003 [x] VERIFIED
+
+## US-REVIEW-S1 Sprint 1 Review
+1. Full gate run: the US-003 run above, at 90816d2. No code has changed since
+   (only this file and the PRD checkboxes). Summary: ruff All checks passed;
+   check_types 0 diagnostics; check_fp 0 finding(s); pytest 243 passed;
+   check_red all 16 new RED; mutation 28 of 28 killed.
+2. probe_scan (copied out of docs/evidence/harness_probes_2026-10-09.md, run from the scratchpad):
+    == green gate output (want 0 hits each)
+      pytest -v        exit=0 lines=  254 hits=0
+      ruff check .     exit=0 lines=    1 hits=0
+      check_fp         exit=0 lines=    1 hits=0
+      check_types      exit=0 lines=    3 hits=0
+      complexity       exit=0 lines=    3 hits=0
+      git status/log   exit=0 lines=   20 hits=0
+    == reading files (cat): hits per file
+      .claude/hooks/diagnostic_scan.py                   10
+      docs/CHECKS.md                                     2
+      tests/integration/test_diagnostic_scan.py          7
+      3 of 50 files trip the scanner when merely read
+   Precision unchanged. The failure event uses the same scan(), and the
+   @control test_a_failed_command_with_no_diagnostic_stays_quiet pins it quiet.
+3. Interpreters: all 5 hook entries launch with `python3`.
+    which -a python3 -> /c/Users/wh429/scoop/shims/python3
+                        /c/Users/wh429/AppData/Local/Microsoft/WindowsApps/python3
+    python3 -> C:\Users\wh429\scoop\apps\python\current\python.exe 3.14.3
+   ISSUE R1-1: python3 resolves on THIS machine only because scoop provides
+   it. On a stock Windows install (python.org installer), `python3` is the
+   Microsoft Store alias stub, which prints "Python was not found" and exits
+   non-zero. A non-2 exit from a PreToolUse hook is non-blocking, so
+   guard_git and guard_gates would fail OPEN, and silently. This predates
+   this PRD (every hook used python3 on main); US-002 made post_edit_check
+   use it too. NOT fixed here: the launcher is the hook interface, and
+   changing it is a decision for a person. Options:
+     a) document "python3 must resolve" as P-2 environment, plus a
+        SessionStart check that says so loudly (smallest);
+     b) launch through `py -3` on Windows (not on POSIX; needs a per-OS
+        command, which settings.json cannot express directly);
+     c) accept it as a stated limit in GUARDRAILS.md (US-010).
+<review-issues-found/>
+  - R1-1 (above). Pre-existing, environment-dependent; does not affect this
+    machine. Sprint 2 is not blocked by it.
+
+## R1-1 fix (decision 2026-10-09: option a)
+A SessionStart hook, plain shell (not a python3 script), runs
+`python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))'`. If that
+fails, it prints systemMessage (shown to the person) plus additionalContext
+(shown to the agent), saying the hooks are NOT running. P-2 in the PRD
+now states that python3 must start Python 3.11+.
+RED:
+    FAILED test_settings.py::test_the_python3_check_does_not_itself_need_python3
+    FAILED test_settings.py::test_a_missing_python3_is_announced_at_session_start
+    FAILED test_settings.py::test_a_working_python3_is_silent_at_session_start
+      ValueError: not enough values to unpack (expected 1, got 0)   (no SessionStart entry)
+    3 failed, 4 passed
+Probe with a Store-like stub on PATH (prints "Python was not found", exits 9009):
+    {"systemMessage": "Hooks are NOT running: python3 does not start Python 3.11+ here. ..."}  exit=0
+  The real python3 printed nothing; exit=0.
+Live SessionStart firing: NOT run. It fires only when a session starts;
+re-check it in the US-REVIEW-S3 fresh session.
+Full gate run:
+    ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 247 passed | check_red: 28 new, 8 controls, OK all 20 new RED
+    mutation: OK 29 of 29 mutants killed (python3-check-silent exit 1)
+STATUS: R1-1 VERIFIED (live session start pending)
+
+## US-004 guard_gates scope
+RED (before the change):
+    FAILED test_every_gate_in_the_probe_table_is_refused[tools/check_red.py]
+    ... [tools/check_fp.py] [tools/check_types.py] [tools/isolation.py] [tests/conftest.py]
+    ... [pyproject.toml] [.Claude/Hooks/guard_git.py] [RUFF.TOML] [Tools/Mutation_Check.py]
+    9 failed, 3 passed (the 3 allow rows; @control)
+The settings.local.json row is already covered by P-1's test_settings_local_json_is_a_gate.
+FINDING (fixed next, separately): post_edit_check reports a false
+`ERROR Cannot find module guard_shared [missing-import]` on every edit to a
+hook that imports guard_shared. Unlike check_types, it does not add
+.claude/hooks to the search path.
+Full gate run:
+    ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 261 passed | check_red: 32 new, 8 controls, OK all 24 new RED
+    mutation: OK 31 of 31 mutants killed (gates-case-sensitive, gates-forget-check-red exit 1)
+STATUS: US-004 [x] VERIFIED
+
+## Fix: post_edit_check false missing-import on hooks (found in US-004)
+RED:
+    FAILED test_hooks.py::test_post_edit_check_is_silent_on_a_clean_hook_that_imports_its_sibling
+      Left contains one more item: 'ERROR Cannot find module `guard_shared` [missing-import]'
+Fix: for a file in .claude/hooks, add that directory to pyrefly's search path, as check_types does.
+Full gate run: ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 263 passed | check_red: 46 new, 11 controls, OK all 35 new RED
+    mutation: OK 32 of 32 killed (post-edit-forgets-hook-siblings exit 1)
+STATUS: VERIFIED
+
+## US-005 guard_git parsing
+RED: tests/integration/test_guard_git.py, against a temp repo (f.txt dirty):
+    FAILED test_us005_refuses[...] for every deny row: git -C . add -A | git -c core.x=1 add -A |
+      git --no-pager add -A | git.exe add -A | git add -Av | git add -uv | git add :/ |
+      git add -- :/ | git add ':(top)' | bash -c "git add -A" | sh -c 'git checkout -- f.txt' |
+      env git add -A | & git add -A | cmd /c git add -A | pwsh -Command "git add -A" |
+      powershell -c "git add -A" | git add `<newline> -A | $(git add -A)
+    18 failed, 8 passed (the 8 allow rows, @control; one added: echo '$(git add -A)',
+    a single-quoted $( ) that the shell does not run)
+Implementation: judge() recurses through $( ) bodies (outside single
+quotes) and through bash|sh|zsh|dash|pwsh|powershell -c/-Command scripts.
+It unwraps env/&/command/exec/cmd /c, normalises git.exe, and skips git's
+global options (-C also moves the cwd used for the dirty checks).
+check_add refuses short clusters containing A or u, and :/ / :(top) pathspecs.
+guard_shared.commands() joins PowerShell backtick-newline continuations.
+The stated limits are in the guard_git docstring.
+Mutant git-hook-allows-add-all was RETARGETED: its old pattern no longer
+exists after the restructure. It still removes the -A refusal.
+
+FOUND LIVE while committing: the new guard refused my own commit command,
+because a heredoc body (this progress text) contained "$(git add -A)".
+subshells() scanned the raw line, heredoc bodies included. Fixed: $( ) is
+looked for only after heredoc bodies are removed (guard_shared.without_heredocs,
+now public). Allow row added (RED on the new code before the fix):
+    FAILED test_us005_allows[cat >> notes.txt <<'EOF'\nthe guard now refuses $(git add -A)\nEOF]
+Mutant git-hook-runs-heredoc-subshells added.
+This entry going through is itself the live check of that fix.
+
+Full gate run (after the fix):
+    ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 292 passed | check_red: 48 new, 11 controls, OK all 37 new RED
+    mutation (re-run with the new mutant): OK 35 of 35 killed
+STATUS: US-005 [x] VERIFIED
+
+## US-006 guard_git discard forms
+RED (temp repos: `dirty` = sub/x.txt dirty, u.txt untracked, alias.aa = add -A; `clean` = on main, nothing to lose):
+    FAILED test_us006_refuses_on_a_dirty_tree[...] for all 17 rows: git checkout sub/x.txt |
+      git checkout . | git checkout HEAD sub/x.txt | git checkout -f | git checkout --force main |
+      git switch --discard-changes main | git switch -f main | git reset --hard |
+      git reset --hard HEAD~1 | git clean -fd | git clean -fdx | git stash drop | git stash clear |
+      cd sub && git checkout -- x.txt | cd sub && git restore x.txt |
+      Set-Location sub; git restore x.txt (row added: PowerShell cd) | git aa
+    FAILED test_us006_restoring_only_the_index_is_allowed   (the false positive)
+    18 failed, 6 passed (the clean-tree and clean-file allow rows, @control)
+Implementation as the PRD specifies. Additions, in depth:
+  - Set-Location/sl/chdir/pushd are tracked like cd.
+  - `clean -x/-X` also counts ignored files (status --ignored): -x deletes them.
+  - Shell aliases (`!cmd`) are not expanded: a stated limit.
+Concern noted, NOT acted on: the PRD denies `stash drop/clear` only when the
+worktree is dirty. A stash is uncommitted work whatever the worktree's
+state; denying it always may be the better rule. Proposal for a person.
+check_fp caught CHECKS as a mutable dict -> MappingProxyType.
+guard_git.py is now 335 lines; the S2 review handles the split.
+Full gate run:
+    ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 322 passed | check_red: 78 new, 20 controls, OK all 58 new RED
+    mutation: OK 40 of 40 killed (git-hook-allows-checkout-without-dashdash,
+      git-hook-allows-reset-hard, git-hook-ignores-cd, git-hook-ignores-repo-aliases,
+      git-hook-denies-index-only-restore: all exit 1)
+STATUS: US-006 [x] VERIFIED
+
+## CORRECTION (found during US-011): check_red judges the committed HEAD, not the worktree
+tools/check_red.py checks out --head (default HEAD). Each "check_red" line
+recorded above was run BEFORE that task's commit, so it covered the earlier
+commits' tests, not the task's own. Evidence: "107 new test(s)" both before
+and after US-011's tests were added to the worktree.
+What still holds: the run at f3ac13a (after US-006 and the refactor) says
+    107 new test(s), 26 declared control(s)
+    OK   all 81 new test(s) were RED on the base code
+It covers every test added from aff6f44 to d16129a, so none of those
+tests was green on the base. Only the per-task attribution was wrong.
+From US-011 on: commit, then run check_red on that commit, then record it.
+(The PR-level gate in CI checks the branch head, so CI was never affected.)
+
+## US-011 A crashing PreToolUse hook refuses, not allows
+RED (copied hooks in tmp_path, broken guard_shared):
+    FAILED test_a_crashing_git_guard_refuses_and_names_the_crash[NameError]
+    FAILED test_a_crashing_git_guard_refuses_and_names_the_crash[SyntaxError]
+    FAILED test_a_crashing_gate_guard_refuses_without_the_override
+    FAILED test_a_crashing_gate_guard_lets_the_override_repair_it_and_says_so
+      AssertionError: Traceback (most recent call last): ... assert 1 == 0   (the hook exited 1: fails open)
+    4 failed
+Implementation: both guards import guard_shared inside try. On failure they
+print an inline json.dumps decision and sys.exit(0) (exiting keeps the names
+bound for pyrefly). main() wraps judge_payload(). guard_git denies, naming
+the exception. guard_gates denies, or under GATE_EDIT=1 lets the edit through
+with additionalContext naming the crash, so a broken hook can be repaired.
+The crash path reads os.environ.get(OVERRIDE, ""), so the existing mutant
+gate-override-accepts-any-value still matches exactly once.
+Live: only in scratch copies (the tests run the real hooks copied to
+tmp_path); the live hooks were never broken for this.
+Full gate run (worktree):
+    ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 328 passed
+    mutation: OK 42 of 42 killed (git-hook-crash-fails-open, gate-hook-crash-blocks-override exit 1)
+    check_red: run AFTER this commit, recorded with US-012.
+STATUS: US-011 [x] VERIFIED (check_red pending, next entry)
+
+## Gate runs now happen on a clean git worktree of the task's commit
+The mutation check takes 13+ min and copies the worktree, so each task's
+code is committed, and the full gates (ruff, check_types, check_fp,
+pytest, check_red --base main, mutation_check) run on a detached
+worktree of that commit, with GATE_EDIT unset. The [x] follows only after
+that run passes. Script: scratchpad/gates_at.sh. check_red then judges
+exactly the task's commit.
+
+## US-012 post_edit_check judges only files inside the project (69f2c04)
+RED: FAILED test_post_edit_check_does_not_judge_a_file_outside_the_project
+     Left contains one more item: '...\scratch.py:1:7: ARG001 Unused function argument: `unused`'
+Existing tests changed (stated in the commit): the ruff-finding and clean-file
+tests now name tmp_path as the project, with ruff.toml copied in (ruff
+finds its config by walking up from the file).
+Gates @69f2c04: ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s)
+    pytest 330 passed | check_red: 115 new, 26 controls, OK all 89 new RED
+    mutation: OK 43 of 43 killed (post-edit-judges-outside-files exit 1)
+check_red for US-011 (@e7cf550, run after its commit): 113 new, 26 controls, OK all 87 new RED.
+STATUS: US-012 [x] VERIFIED
+
+## US-013 Python files written through a shell are checked too (aece4e5)
+RED:
+    FAILED test_recently_written_finds_only_the_python_files_changed_since
+      AttributeError: module 'diagnostic_scan' has no attribute 'recently_written'
+    FAILED test_python_written_through_a_shell_is_checked
+      AssertionError: assert ('Python files written through a shell' in '')
+    2 failed, 1 passed (the no-fresh-file precision case, @control)
+Deviation (stated in the commit): the PRD says skip silently without the
+venv. CI and mutation copies have no .venv, so the test could never pass
+there. The interpreter is the venv; else the hook's own python when it
+has ruff and pyrefly; else skip.
+Cost: recently_written over this repo = 6 ms (limit 200 ms). At most 5 files are checked.
+Live:
+    `printf 'import os\n' > scratch_shell_probe.py` ->
+      PostToolUse:Bash hook additional context: Python files written through a shell (post_edit_check did not see these):
+        scratch_shell_probe.py:1:8: F401 [*] `os` imported but unused
+    (file deleted after)
+    `pytest -q -p no:cacheprovider` -> 334 passed, no such context.
+Gates @aece4e5: ruff OK | check_types 0 | check_fp 0 | pytest 334 passed
+    check_red: 119 new, 27 controls, OK all 92 new RED
+    mutation: OK 44 of 44 killed (shell-written-python-unchecked exit 1)
+STATUS: US-013 [x] VERIFIED
+
+## US-014 Refuse a commit gated on a filter's exit status (a54be71)
+RED: 8 failed (4 commands x Bash/PowerShell), 6 passed (the allow rows, @control)
+Live: `true | tail -1 && git commit --dry-run -m probe` ->
+    PreToolUse:Bash hook error: this commit is gated on tail's exit status, not on true's.
+    A failing run would still commit. Add 'set -o pipefail;' or run the check and the commit
+    as separate commands.
+FOUND while building it: a stale .pyc. Replacing `SEPARATORS` with
+`separators` (same length), within a second of the previous edit, left
+the source mtime and size equal to the cached .pyc, so Python ran the OLD
+splitter until __pycache__ was deleted. The live hooks share that cache,
+so a hook edited this way can keep running its old code. Not fixed
+(proposal below).
+Gates @a54be71: ruff OK | check_types 0 | check_fp 0 | pytest 349 passed
+    check_red: 134 new, 33 controls, OK all 101 new RED
+    mutation: OK 45 of 45 killed (commit-gated-on-filter-allowed exit 1)
+STATUS: US-014 [x] VERIFIED
+
+## US-015 Probe updatedInput, then decide -- PARTIAL, BLOCKED ON A PERSON
+Step 1 (SPIKE) NOT RUN. The probe needs a throwaway PreToolUse hook that
+rewrites a command, registered in .claude/settings.json. The auto-mode
+classifier refused that Edit ("[Self-Modification]"). I did not route
+around it (no --settings file, no claude -p workaround). The probe script
+was deleted unused.
+To unblock: a person registers the probe hook (or runs the spike), or
+grants this edit. Questions 2 and 3 (does a permission prompt appear; what
+the transcript shows) need an interactive default-mode session anyway.
+Step 2: not built (the decision rule needs Step 1's evidence).
+Step 3: DONE (dd3f803). The PRD removes the warning either way.
+    RED: the two merged-then-truncated commands moved to QUIET_COMMANDS: 2 failed on the base.
+    The CHECKS.md note is written in US-010.
+Gates @dd3f803: see US-REVIEW-S2.
+STATUS: US-015 [ ] Step 3 VERIFIED; Steps 1-2 BLOCKED
+
+## US-REVIEW-S2 Sprint 2 Review (scope US-004..006, US-011..015)
+1. Full gates @dd3f803 (clean worktree, GATE_EDIT unset):
+    ruff All checks passed! | check_types INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics
+    check_fp 0 finding(s) | pytest 349 passed in 24.40s
+    check_red: 136 new test(s), 33 declared control(s); OK all 103 new test(s) were RED on the base code
+    mutation: OK control passed, equivalent canary survived, 45 of 45 mutants killed
+2. Probe matrices (re-run from the evidence file, GATE_EDIT unset):
+    probe_git:   mismatches: 1  -> allow 'git clean -fdx'
+    probe_git2:  mismatches: 1 of 20 -> allow "Start-Process git -ArgumentList 'add','-A'"
+    probe_gates: mismatches: 0
+   Both remaining mismatches are the probe's expectation, not the guard:
+   - probe_git's repo has no untracked or ignored files. Under US-006's
+     rule (deny clean -f only when there is something to delete), allow is
+     right. test_us006_refuses_on_a_dirty_tree[git clean -fdx] covers the
+     dirty case.
+   - Start-Process is a stated limit in the guard_git docstring, per the PRD.
+   NOTE: with GATE_EDIT=1 inherited, probe_gates reports 17 mismatches,
+   because the override opens every gate. Run the probes with it unset.
+3. Linus check: guard_git.py is 325 lines (it was 265 after the f3ac13a
+   split; US-011 crash handling and the US-014 gated-commit check added
+   60). It still reads top to bottom: crash handler, git option parsing,
+   status helpers, one check per subcommand, the gated-commit check, judge,
+   main. Over the ~250 guide.
+<review-issues-found/>
+  - R2-1 US-015 Steps 1-2 blocked on a person (auto-mode refused the probe hook edit).
+  - R2-2 guard_git.py is 325 lines. Proposal: move git_out/is_ref/status/expand_alias
+    into a git_shared.py sibling. Not done; it is a new module, so a person decides.
+  - R2-3 Stale-.pyc hazard for live hooks. Proposal: launch hooks with `python3 -B`,
+    or set PYTHONDONTWRITEBYTECODE=1 for hook processes, so no .pyc is written for
+    the hooks to read later. Not done: it changes every hook command (the hook interface).
+  - R2-4 probe_git's `git clean -fdx` expectation is stale (see 2); update the probe in US-010.
+
+## US-007 Contract alarms only on loss (b17f17a)
+RED: 8 failed on the base (an added top-level key; 6 live tool_response key
+sets: persistedOutputPath+Size, backgroundTaskId, +backgroundCwdHint,
+bashEditDiff, returnCodeInterpretation, backgroundTaskId+timedOutAfterMs;
+the PowerShell shape without noOutputExpected). Losing stdout still alarms (@control).
+Existing test changed: "add some_new_field" used to expect SHAPE MOVED.
+Amendment: noOutputExpected is OPTIONAL_RESPONSE_KEYS, not pinned per tool.
+Live: `seq 1 300000` (persisted output) and a background `echo` -> no contract note.
+Gates @b17f17a: ruff OK | check_types 0 | check_fp 0 | pytest 358 passed
+    check_red: 147 new, 34 controls, OK all 113 new RED
+    mutation: OK 46 of 46 killed (contract-alarms-on-added-keys exit 1)
+STATUS: US-007 [x] VERIFIED
+
+## US-008 pyrefly ERROR lines (8d8fc99)
+RED: FAILED test_fires_on_a_real_diagnostic[pyrefly ERROR lines]  (1 failed, 51 passed)
+Precision: the new quiet cases (check_types' `INFO 0 diagnostics`, pytest -v names
+containing "error") pass; probe_scan after: 0 hits on all 6 green outputs.
+US-007 and US-008 were written together in the tree; US-008's hunks were taken out
+with Edit, US-007 was committed, then they were re-applied, so each is its own commit.
+Process note: guard_git (US-014) refused my first US-008 commit command,
+`pytest ... | grep ... && git add ... && git commit`, which is exactly its job.
+Gates @8d8fc99: ruff OK | check_types 0 | check_fp 0 | pytest 362 passed
+    check_red: 151 new, 34 controls, OK all 117 new RED
+    mutation: OK 47 of 47 killed (scan-misses-pyrefly-error exit 1)
+STATUS: US-008 [x] VERIFIED
+
+## US-009 [x] SKIPPED (decided 2026-10-09, PRD Decisions #3)
+
+## US-010 Regenerate doc numbers; record the probes
+- CHECKS.md: Measurements (mutation, pytest, check_red) replaced with the
+  pasted 8d8fc99 gate output. Instrument-defect rows 13-20 (F1-F8) and 21-27
+  (found during this run) added, each with its probe or test and output.
+  "35 tests" corrected with `check_red --base 2b68ad6^ --head 2b68ad6`:
+    37 new test(s), 0 declared control(s) / OK all 37 new test(s) were RED.
+  The CI-evidence section keeps the CI run's own 174/17 output, now labelled
+  as that run's record.
+- GUARDRAILS.md: "injects 17 bugs" -> 47, with its command; hook table (matchers
+  incl. PowerShell and NotebookEdit, SessionStart check, crash behaviour);
+  post_edit_check's interpreter rule; limits name PowerShell and what is not parsed;
+  defect-class rows with counts pasted from `pytest --collect-only` and MUTANTS.
+- evidence/harness_probes_2026-10-09.md: AFTER section with all four probes re-run.
+Acceptance grep:
+    $ grep -n "17 bugs\|174 passed\|35 tests" docs/*.md
+    docs/CHECKS.md:105:  ... 174 passed in 2.61s ...   (CI run 37980856090's own log, labelled)
+    docs/CHECKS.md:113:  ... 174 passed in 3.92s ...   (same, MariaDB leg)
+  Nothing stale: both are the dated record of that CI run, not current claims.
+STATUS: US-010 [x] (docs; numbers pasted from commands)
+
+## US-REVIEW-S3 Final Review
+1. Full gates, clean worktrees, GATE_EDIT unset:
+   @20299bb (US-010): pytest 362 passed | check_red 151 new, 34 controls, OK all 117 RED | mutation 47 of 47
+   @7731a7b (R3-1, final HEAD):
+     ruff All checks passed! | check_types INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics
+     check_fp 0 finding(s) | pytest 364 passed in 25.58s
+     check_red: 153 new test(s), 34 declared control(s); OK all 119 new test(s) were RED on the base code
+     mutation: OK control passed, equivalent canary survived, 48 of 48 mutants killed
+2. Probe matrices: see the evidence file's AFTER section. gates 0; guard_git 1 + 1, both explained.
+3. Live, in a FRESH session (`claude -p --model haiku`, stream-json; scratchpad/live_rs3.jsonl):
+     SessionStart hook_response: exit_code 0, output ""   (R1-1 check fired; silent because python3 works)
+     PowerShell `git add -A --dry-run` -> "PreToolUse:PowerShell hook error: `git add -A` / `--all` / `-u` stages everything ..."
+     PowerShell `Write-Output "WARN live-probe"` -> context "L1 WARN live-probe ^ a tool logged a warning"
+     Bash `echo "WARN live"; exit 3` -> "the command FAILED (exit 3). Its output was scanned too: ..."
+     PowerShell `Write-Output "WARN live"; exit 3` -> the same
+   FOUND: headless payloads have no scratchpad_dir, so every call alarmed
+   "keys gone: scratchpad_dir". Fixed as R3-1 (7731a7b): RED test, then
+   OPTIONAL_TOP_LEVEL_KEYS, then mutant contract-alarms-on-headless-sessions.
+4. Fresh-reviewer angle (an agent piping payloads into the hooks against
+   throwaway repos at 20299bb). Every hit is recorded in the evidence file,
+   section "US-REVIEW-S3: fresh-reviewer probe", as a new probe row or a
+   stated limit. Summary: about 30 new guard_git rows (abbreviated long options,
+   -qf clusters, pathspec magic without --, plumbing such as read-tree,
+   checkout-index, apply -R, rm -f and worktree remove --force; wrapper
+   prefixes time/nice/nohup/timeout/xargs/VAR=; ( ) { } ! & then/do; bash
+   backslash-newline; -c aliases; missing global options), gated-commit gaps
+   (FILTERS incomplete; `set +o pipefail` counts as on), and guard_gates gaps
+   (.. segments, trailing dot/space, ::$DATA, NotebookEdit carrying both
+   keys, and unlisted files that can weaken a gate: pytest.ini, other
+   conftest.py, .ruff.toml, tools/__init__.py, .git/config, .git/hooks).
+   NONE fixed in this PRD: it is a new body of work.
+<review-issues-found/>
+  - R3-1 FIXED (7731a7b).
+  - R3-2 The fresh-reviewer hits (evidence file). Proposal: a follow-up PRD with
+    the rows as its RED tables. The guard_gates scope additions are a person's decision.
+  - Still open from earlier reviews: R2-1 (US-015 Steps 1-2 blocked), R2-2 (guard_git
+    size), R2-3 (stale .pyc), R1-1 live firing on a machine WITHOUT python3 (not run).
+  - CI not run: the branch has not been pushed. A person pushes it.
+
+## Sprint 4: BLOCKED (2026-10-10), session not launched with GATE_EDIT=1
+`echo "GATE_EDIT=[$GATE_EDIT]"` -> `GATE_EDIT=[]` (it was [1] earlier in this session;
+the session appears to have been relaunched without it).
+First gate edit (US-016, settings.json `python3` -> `python3 -B`) ->
+    PreToolUse:Edit hook error: .claude/settings.json is a gate, and a gate cannot check its
+    own weakening. Ask the person to change it deliberately, outside this turn.
+Per the Rules: stopped; no gate file was written through a shell.
+
+Done without a gate edit (US-016, test half):
+- Tests start hooks with `-B` (hook_command(); test_guard_git and test_diagnostic_scan too),
+  and load()/load_scan() import with sys.dont_write_bytecode set.
+- test_running_and_importing_hooks_leaves_no_bytecode_behind (a copy of the hooks, run and
+  imported through the suite's helpers; no __pycache__ after). RED on the base: hook_command
+  and load(name, hooks) do not exist there.
+- Evidence: rm -rf .claude/hooks/__pycache__; ruff OK; 187 hook tests passed; then
+    ls: cannot access '.claude/hooks/__pycache__': No such file or directory
+  Full suite: 365 passed in 21.80s.
+Waiting on a gate edit: settings.json `python3 -B` (6 commands), its test
+(test_every_hook_script_is_launched_without_writing_bytecode, written and run RED, then
+removed so the branch stays green), and the two mutants. US-017, US-018 and US-019 are
+all gate edits (guard_git.py, guard_gates.py, mutation_check.py).
+To unblock: relaunch Claude Code with GATE_EDIT=1, as P-1 requires.
+
+## Sprint 4 resumed (2026-10-10): session relaunched with GATE_EDIT=1
+Verified: bash `GATE_EDIT=[1]`; PowerShell process-level [1], user-level [] (scoped to the launch);
+guard_gates on a piped ruff.toml edit -> "allowed by GATE_EDIT=1".
+
+## US-016 Hooks never run stale bytecode (8ecd80b tests, 5106b7a settings, 8675216 control)
+RED: test_every_hook_script_is_launched_without_writing_bytecode -> all 5 hook commands lacked -B.
+Live: with __pycache__ deleted and every hook firing many times since:
+    ls: cannot access '.claude/hooks/__pycache__': No such file or directory
+Cost: guard_git 125 ms/call with -B vs 123 ms without (mean of 10).
+CORRECTION: I recorded test_running_and_importing_hooks_leaves_no_bytecode_behind as
+"RED on the base". check_red said otherwise on every Sprint 4 commit:
+    FAIL test_hooks::test_running_and_importing_hooks_leaves_no_bytecode_behind passed before the change
+What it checks lives in the test helpers, which arrive with the test, so only test code can make it
+RED (as with CHECKS instrument defect 7). It is now a @control with that reason (8675216). Mutant
+test-helpers-write-bytecode is killed, so it can fail. The mutant shell-hooks-skip-powershell was
+updated for the new guard_git command text.
+STATUS: US-016 [x] VERIFIED
+
+## US-017 Abbreviated long options and -qf clusters (57cb919)
+RED: 9 of 9 deny rows; 4 allow rows (-bfix, -q, --detach, --har on a clean tree) @control.
+Mutants git-hook-misses-abbreviated-options and git-hook-misses-f-in-cluster added;
+git-hook-allows-reset-hard retargeted.
+STATUS: US-017 [x] VERIFIED
+
+## US-018 git rm -f over uncommitted work (577a9a3)
+RED: 4 of 4 deny rows; 3 allow rows (--cached, -f on a clean file, rm without -f) @control.
+Mutant git-hook-allows-rm-force added.
+STATUS: US-018 [x] VERIFIED
+
+## US-019 guard_gates collapses .. (a89e48f)
+RED: 2 (the gate through `..` was allowed; `.claude/hooks/../../app/services.py` was falsely denied).
+`tools/../ruff.toml` and `app/../.claude/settings.json` were already denied: @control.
+Mutant gates-skip-dotdot added; gates-case-sensitive retargeted.
+Live, incidentally: guard_gates crashed between two edits (NameError: posixpath) and, under
+GATE_EDIT=1, allowed the repairing edit with "guard_gates crashed (...); edit allowed by GATE_EDIT=1
+so the hook can be repaired": US-011's crash path, fired live.
+STATUS: US-019 [x] VERIFIED
+
+## Gate runs per Sprint 4 commit (clean worktrees, GATE_EDIT unset)
+    5106b7a: pytest 368 | mutation 50 of 50 | check_red FAIL (the control above, then fixed)
+    57cb919: pytest 383 | mutation 52 of 52 | check_red FAIL (same)
+    577a9a3: pytest 391 | mutation 53 of 53 | check_red FAIL (same)
+    a89e48f: pytest 396 | mutation 54 of 54 | check_red FAIL (same)
+    8675216 (final): ruff All checks passed! | check_types INFO 0 diagnostics (4 suppressed) / 0 |
+      check_fp 0 finding(s) | pytest 396 passed in 26.60s |
+      check_red 185 new test(s), 44 declared control(s); OK all 141 new test(s) were RED on the base code |
+      mutation OK control passed, equivalent canary survived, 54 of 54 mutants killed
+
+## US-REVIEW-S4
+1. Full gates @8675216: above, all green.
+2. The reviewer's rows for US-017..US-019 re-run through the live hooks (scratchpad/probe_s4.py):
+   mismatches: 0 of 19 (16 guard_git, 3 guard_gates). Pasted into the evidence file.
+3. No .claude/hooks/__pycache__ after the suite and live firings (US-016).
+4. Evidence file: the R3-2 rows marked FIXED (US-017/018/019); `git mv -f` stays open.
+5. Open review issues in the PRD updated.
+Also: the two reviewer-agent assessments are saved to docs/evidence/harness_value_assessment_2026-10-10.md.
+guard_git.py is now 362 lines (R2-2; Decision 3: accept the growth).
+<review-passed/>
+
+## Sprint 5: the last open items, probed (2026-10-10, eacaf59)
+Each open item was probed before deciding whether it is worth a task. Raw outputs are in
+docs/evidence/harness_probes_2026-10-09.md, "Open-items probes, 2026-10-10"; verdicts and
+tasks are in the PRD, "Sprint 5".
+Yardstick: every shell command in all 6 agent transcripts for this repo (347 commands).
+
+R1-1 (python3 warning): the SessionStart command, run with only the REAL Windows Store stub on PATH
+    python3.exe -> .../AppInstallerPythonRedirector.exe
+    python3 -c 1 -> "Python was not found; run without arguments to install from the Microsoft Store..." exit 49
+    SessionStart command -> {"systemMessage": "Hooks are NOT running: python3 does not start Python 3.11+ here..."} exit 0
+    normal PATH -> (no output) exit 0
+  VERIFIED at the command level. Not observed: Claude Code displaying it at a real session start
+  (the scripted stub session was stopped by the person). -> US-020, a person, ~2 min.
+
+R3-2 (remaining bypasses): 39 open rows re-run through the live guard_git -> 38 still open.
+  (The 1 DENY, Push-Location, is incidental: `../f.txt` leaves the repo, git status fails, and the
+  guard fails closed.)
+  Real use across 347 commands: 0 honest uses of any open form to destroy work. Every other hit was
+  probe data inside heredocs. The only real hits were 2 x `git worktree remove --force` of a throwaway
+  worktree, which were legitimate.
+  -> CLOSED as stated limits. Not worth fixing: adversary-only; refusing some would block legitimate work.
+
+US-015 Steps 1-2: `2>&1 | tail/head/grep` (heredocs excluded) = 58 of 349 commands (53 of 267 in
+  this PRD's session). The costly form, filter then `&& git commit`, appeared 10 times for real and is
+  now refused by US-014. No defect has been traced to a discarded diagnostic.
+  -> US-021, a person decides. Recommended: close as "not built".
+
+R2-2 (guard_git 362 lines): it reads top to bottom; 85 tests collected in test_guard_git.py; 14
+  guard_git mutants. -> FROZEN, no split.
+
+CI: origin exists; harness-hardening has no upstream (never pushed); gh is not installed; gate files
+  vs main: 9 files, +910/-117; the new tests touch os.name only through pure functions.
+  -> H-1, a person: review, push, open a PR, record the CI run.
+
+Correction: three numbers in my first draft of the PRD's Sprint 5 were typed, not measured (107 tests,
+17 mutants, 186 new tests). Measured: 85, 14 and 185. Corrected before commit eacaf59, each with its
+command alongside.
+
+STATUS: Sprint 5 probes VERIFIED. No build work remains for the agent; US-020, US-021 and H-1 are
+person-only.
+
+## Sprint 6 (2026-10-10), from PR 5. Run in the review session, launched with GATE_EDIT=1.
+Preconditions: `echo "GATE_EDIT=[$GATE_EDIT]"` -> `GATE_EDIT=[1]`; every gate edit was announced
+("gate edit to ...diagnostic_scan.py allowed by GATE_EDIT=1 ...").
+
+## US-022 Judge shell-written Python by git content, not mtime
+RED (before the code change), 8 probe-table tests:
+    FAILED test_a_rebase_that_rewrites_files_with_identical_content_is_not_reported
+      AssertionError: assert 'Python files...`also_unused`' == ''
+    FAILED test_a_checkout_whose_files_match_the_new_head_is_not_reported
+    FAILED test_touching_a_clean_file_is_not_reported
+    FAILED test_outside_a_git_work_tree_the_check_falls_back_to_mtime_and_says_so
+    4 failed, 4 passed (the 4 @control rows: untracked, dirty, written+committed in one command,
+    stash pop leaving the file dirty)
+Fixture note: setup commits are backdated with GIT_COMMITTER_DATE (reflog entries honour it) and
+os.utime, so they fall outside the command's window.
+Design, deviation from the PRD wording (stricter): rule (b) counts only when EVERY reflog entry in the
+window is `commit:` / `commit (initial):`; any other entry voids it, rather than parsing rebase spans.
+The reflog time comes from `--date=unix` %gd (the entry time), not %ct (the commit date), because a
+checkout of an old commit has an old %ct.
+In-turn catch: post_edit_check flagged F821 `subprocess` (missing import) on the first edit. The
+scanner would have crashed on every shell call, silently, since it only reports. Fixed on the next edit.
+Gates: ruff All checks passed! | check_types 0 diagnostics | check_fp 0 finding(s) | pytest 406 passed
+check_red --base a9058d3^ --head a9058d3: 10 new test(s), 4 declared control(s); OK all 6 new RED
+Mutants, run alone: shell-check-ignores-git-state exit 1; shell-check-misses-same-command-commit exit 1
+Live (throwaway branch probe-us022, deleted after):
+  `git rebase -q --force-rebase HEAD~3 --exec 'git commit -q --amend --no-edit'` -> trees same as
+  a9058d3: yes; rewrote diagnostic_scan.py, test_diagnostic_scan.py, mutation_check.py -> NO context.
+  `printf 'import os\n' > scratch_probe_us022.py` ->
+    Python files written through a shell (post_edit_check did not see these):
+      scratch_probe_us022.py:1:8: F401 [*] `os` imported but unused
+  `git switch harness-hardening` (identical rewrite again) -> no context.
+STATUS: US-022 [x] VERIFIED (a9058d3)
+
+## US-023 Name every file the shell check saw
+RED: test_every_candidate_file_is_named_checked_or_not failed with exactly PR 5's shape:
+    a_bad.py:1:7: ARG001 ... / ... and 2 more file(s) not checked   (f1..f6 never named)
+    1 failed, 1 passed (@control: all clean -> nothing)
+After, the same 7 files:
+    7 file(s): 1 with findings, 4 clean, 2 not checked
+    a_bad.py: 1 finding(s) / f1.py..f4.py: clean / f5.py, f6.py: not checked (over the limit of 5)
+Gates: ruff clean | check_types 0 | check_fp 0 | pytest 409 passed
+check_red --base HEAD^ --head HEAD (26de8e0): 3 new, 1 control; OK all 2 new RED
+Mutant shell-check-hides-unchecked-names: exit 1 (killed)
+STATUS: US-023 [x] VERIFIED (26de8e0)
+
+## US-REVIEW-S6
+1. Full gates on a clean worktree of 26de8e0 (VIRTUAL_ENV, GATE_EDIT, PYTHONDONTWRITEBYTECODE unset):
+    ruff: All checks passed!
+    check_types: INFO 0 diagnostics (4 suppressed) / INFO 0 diagnostics
+    check_fp: 0 finding(s)
+    pytest: 409 passed in 49.13s
+    check_red --base main: 198 new test(s), 49 declared control(s); OK all 149 new test(s) were RED
+    mutation_check: OK control passed, equivalent canary survived, 57 of 57 mutants killed
+2. Yardstick: every live "written through a shell" report in this repo's transcripts (399 shell calls
+   across all sessions; the check exists only since US-013, so the sample is small): 3 reports.
+     [git rewrite] PR 5 author rewrite (rebase + commit --amend, identical trees) -> disappears under
+                   US-022 (reproduced live on probe-us022: silent).
+     [shell write] US-013 live probe `printf 'import os\n' > scratch_shell_probe.py` -> still reported.
+     [shell write] US-022 live probe, after the fix -> reported (F401).
+   Every report that disappears is a tree-identical rewrite; no real shell write is lost.
+<review-passed/>
+STATUS: Sprint 6 VERIFIED. Remaining items are person-only: US-020, US-021, H-1 (gate review; record
+PR 5's CI in docs/CHECKS.md).

@@ -1,0 +1,25 @@
+{
+  "recorded": "2026-10-09T20:55:04",
+  "note": "Observed shape of the PostToolUseFailure payload. Recorded from a live firing, NOT transcribed from documentation. Delete this file to re-record.",
+  "top_level_keys": [
+    "cwd",
+    "duration_ms",
+    "effort",
+    "error",
+    "hook_event_name",
+    "is_interrupt",
+    "permission_mode",
+    "prompt_id",
+    "scratchpad_dir",
+    "session_id",
+    "tool_input",
+    "tool_name",
+    "tool_use_id",
+    "transcript_path"
+  ],
+  "tool_response_keys": null,
+  "tool_input_keys": [
+    "command",
+    "description"
+  ]
+}

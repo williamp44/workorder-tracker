@@ -18,7 +18,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 # The preset is pinned: with no config file in reach, pyrefly falls back to a
 # lenient preset that reports nothing on a None passed to a str parameter.
-PYREFLY = (sys.executable, "-m", "pyrefly", "check", "--preset", "default", "--min-severity", "warn")
+# The interpreter is pinned too: left to itself, pyrefly asks the first python
+# on PATH for site-packages, and one without the deps gives false
+# missing-import errors (F3 in PRD_HARNESS_HARDENING).
+PYREFLY = (sys.executable, "-m", "pyrefly", "check", "--preset", "default", "--min-severity", "warn",
+           "--python-interpreter-path", sys.executable)
 
 
 def project_command() -> list[str]:

@@ -10,7 +10,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from tools.check_types import ROOT, hooks_command
+from tests.integration.test_hooks import bare_python_first_on_path
+from tools.check_types import ROOT, hooks_command, project_command
 
 
 def _hooks_tree(tmp_path: Path) -> Path:
@@ -32,4 +33,12 @@ def test_the_hooks_command_sees_an_error_planted_in_a_hook(tmp_path):
 def test_the_real_hooks_type_check_clean_including_sibling_imports(tmp_path):
     tree = _hooks_tree(tmp_path)
     r = subprocess.run(hooks_command(tree), cwd=tree, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_the_project_type_checks_clean_whatever_python_is_on_path(tmp_path):
+    # F3: pyrefly asked the first python on PATH for site-packages, not the
+    # interpreter running the gate, and reported false missing-import errors.
+    tree, env = bare_python_first_on_path(tmp_path)
+    r = subprocess.run(project_command(), cwd=tree, capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stdout + r.stderr

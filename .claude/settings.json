@@ -1,23 +1,35 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "SessionStart": [
       {
-        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py\"",
+            "command": "python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 || printf '%s\\n' '{\"systemMessage\": \"Hooks are NOT running: python3 does not start Python 3.11+ here. Every hook in .claude/settings.json launches with python3, and a PreToolUse hook that fails does not block, so guard_git and guard_gates are OFF. Put Python 3.11+ on PATH as python3 (PRD P-2).\", \"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"WARNING: python3 does not start Python 3.11+ here, so every hook in this repo (guard_git, guard_gates, post_edit_check, diagnostic_scan) is NOT running. A quiet turn proves nothing. Tell the person before relying on any guard.\"}}'",
+            "timeout": 15,
+            "statusMessage": "checking the hooks can start"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_git.py\"",
             "timeout": 15,
             "statusMessage": "checking the git command"
           }
         ]
       },
       {
-        "matcher": "Write|Edit|MultiEdit",
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_gates.py\"",
+            "command": "python3 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_gates.py\"",
             "timeout": 15,
             "statusMessage": "checking this is not an edit to a gate"
           }
@@ -30,20 +42,33 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/python\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/post_edit_check.py\"",
+            "command": "python3 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/post_edit_check.py\"",
             "timeout": 60,
             "statusMessage": "linting and type-checking the edit"
           }
         ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/diagnostic_scan.py\"",
+            "command": "python3 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/diagnostic_scan.py\"",
             "timeout": 15,
             "statusMessage": "scanning the output for diagnostics"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -B \"$CLAUDE_PROJECT_DIR/.claude/hooks/diagnostic_scan.py\"",
+            "timeout": 15,
+            "statusMessage": "scanning the failed command's output for diagnostics"
           }
         ]
       }
