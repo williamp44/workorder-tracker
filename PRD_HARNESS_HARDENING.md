@@ -116,7 +116,7 @@ GATE_EDIT=1 ./ralph.sh harness_hardening 20 2 sonnet     # from the repo root, o
 - **Total:** 21 build tasks + 5 review gates = 26 (US-011 to US-015 added 2026-10-09 from the transcript audit; Sprint 4, US-016 to US-019 and its review, added 2026-10-10; Sprint 6, US-022, US-023 and its review, added 2026-10-10 from PR 5)
 - **Progress:** 25/26 closed: 19 build tasks built, US-009 skipped by decision, 5 reviews passed or recorded; US-015 partial (Step 3 done, Steps 1-2 blocked on a person)
 - **Status:** Sprint 6 DONE 2026-10-10 (US-022 a9058d3, US-023 26de8e0, review passed: 57 of 57 mutants); open issues in "Open review issues" at the end of this file
-- **Next Task:** none for the agent. Person-only items: US-020, US-021, H-1 (review the gates, read PR 5's CI); see Sprint 5
+- **Next Task:** none for the agent. H-1 done 2026-11-20 (PR 5 merged on the person's approval). Person-only items still open: US-020, US-021; see Sprint 5
 
 ## Task Dependencies
 
@@ -789,17 +789,27 @@ evidence available: every shell command in all 6 agent transcripts for this repo
     benefit is unmeasured.
   - Revisit only if a defect is traced to a diagnostic that truncation discarded.
   - The alternative, running the spike, needs a person to register the probe hook (auto mode refuses it).
-- [ ] **H-1** (person) Review the gate files, then push and read CI.
-  1. Review `git diff main..harness-hardening -- .claude tools` (9 files, +910/-117). Every edit was made under
-     `GATE_EDIT=1`.
+- [x] **H-1** (person) Review the gate files, then push and read CI. **Done 2026-11-20:** the person approved the
+  merge of PR 5 after the gate-file review.
+  1. Review `git diff main..harness-hardening -- .claude tools` (9 files, +1009/-117 after Sprint 6). Every edit was
+     made under `GATE_EDIT=1`.
   2. Push: `git push -u origin harness-hardening`. Open a PR so `check_red` runs against `origin/main`.
-     **Done 2026-10-10:** [PR 5](https://github.com/williamp44/workorder-tracker/pull/5). The branch was rewritten
-     to author `William T. Pape <wtpape@gmail.com>` (trees, messages and author dates identical) and force-pushed
-     with a lease, `e0c9857` → `e0aa7cd`. The old history is kept locally as `backup/harness-hardening-before-author`.
+     **Done 2026-10-10:** [PR 5](https://github.com/williamp44/workorder-tracker/pull/5).
+     - **Author rewrites:** the branch was rewritten twice, with trees, messages and author dates identical each
+       time, and force-pushed with a lease.
+       - First to `William T. Pape <wtpape@gmail.com>`: `e0c9857` → `e0aa7cd`. GitHub linked that email to the
+         `wtpape-miley` account.
+       - Then (2026-10-13) to `William T. Pape <wpape@hotmail.com>`, so GitHub credits `williamp44`, the repo owner:
+         `5eec0c0` → `2bea0a7`.
+     - **Backups:** the earlier histories are kept locally as `backup/harness-hardening-before-author` and
+       `backup/harness-hardening-before-williamp44`.
   3. Watch for:
      - the SQLite leg's mutation step: 54 mutants, so expect about 15-30 min;
      - any test that assumed Windows. None found by grep, but this is the first Linux run.
-  4. Record the run's URL and pasted step output in `docs/CHECKS.md` under "CI evidence".
+
+     **Done:** no test assumed Windows; CI was green on both legs, last on `2bea0a7` (run 38411398505).
+  4. Record the run's URL and pasted step output in `docs/CHECKS.md` under "CI evidence". **Done:** run
+     38086552299 is recorded there, and the Measurements section cites run 38149872263.
 
 ### Not tasks (decided by the probes)
 
